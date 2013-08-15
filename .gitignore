@@ -77,5 +77,3 @@
 /tools/trasher
 /tools/seek_print
 /tools/zmqsend
-# Mac metafiles
-.DS_Store
