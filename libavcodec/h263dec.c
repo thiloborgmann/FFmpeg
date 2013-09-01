@@ -36,6 +36,7 @@
 #include "h263_parser.h"
 #include "mpeg4video_parser.h"
 #include "msmpeg4.h"
+#include "vdpau_internal.h"
 #include "thread.h"
 #include "flv.h"
 #include "mpeg4video.h"
@@ -111,6 +112,9 @@ av_cold int ff_h263_decode_init(AVCodecContext *avctx)
     }
     s->codec_id= avctx->codec->id;
     avctx->hwaccel= ff_find_hwaccel(avctx->codec->id, avctx->pix_fmt);
+
+    if (avctx->stream_codec_tag == AV_RL32("l263") && avctx->extradata_size == 56 && avctx->extradata[0] == 1)
+        s->ehc_mode = 1;
 
     /* for h263, we allocate the images after having read the header */
     if (avctx->codec->id != AV_CODEC_ID_H263 && avctx->codec->id != AV_CODEC_ID_H263P && avctx->codec->id != AV_CODEC_ID_MPEG4)
@@ -651,6 +655,11 @@ retry:
     if (!s->divx_packed && !avctx->hwaccel)
         ff_thread_finish_setup(avctx);
 
+    if (CONFIG_MPEG4_VDPAU_DECODER && (s->avctx->codec->capabilities & CODEC_CAP_HWACCEL_VDPAU)) {
+        ff_vdpau_mpeg4_decode_picture(s, s->gb.buffer, s->gb.buffer_end - s->gb.buffer);
+        goto frame_end;
+    }
+
     if (avctx->hwaccel) {
         if ((ret = avctx->hwaccel->start_frame(avctx, s->gb.buffer, s->gb.buffer_end - s->gb.buffer)) < 0)
             return ret;
@@ -695,6 +704,7 @@ retry:
         }
 
     av_assert1(s->bitstream_buffer_size==0);
+frame_end:
     /* divx 5.01+ bitstream reorder stuff */
     if(s->codec_id==AV_CODEC_ID_MPEG4 && s->divx_packed){
         int current_pos= s->gb.buffer == s->bitstream_buffer ? 0 : (get_bits_count(&s->gb)>>3);
@@ -750,6 +760,21 @@ intrax8_decoded:
     }
 
     if(s->last_picture_ptr || s->low_delay){
+        if (   pict->format == AV_PIX_FMT_YUV420P
+            && (s->codec_tag == AV_RL32("GEOV") || s->codec_tag == AV_RL32("GEOX"))) {
+            int x, y, p;
+            av_frame_make_writable(pict);
+            for (p=0; p<3; p++) {
+                int w = FF_CEIL_RSHIFT(pict-> width, !!p);
+                int h = FF_CEIL_RSHIFT(pict->height, !!p);
+                int linesize = pict->linesize[p];
+                for (y=0; y<(h>>1); y++)
+                    for (x=0; x<w; x++)
+                        FFSWAP(int,
+                               pict->data[p][x + y*linesize],
+                               pict->data[p][x + (h-1-y)*linesize]);
+            }
+        }
         *got_frame = 1;
     }
 

@@ -1,7 +1,7 @@
 /*
  * FFV1 encoder
  *
- * Copyright (c) 2003-2012 Michael Niedermayer <michaelni@gmx.at>
+ * Copyright (c) 2003-2013 Michael Niedermayer <michaelni@gmx.at>
  *
  * This file is part of FFmpeg.
  *
@@ -529,14 +529,16 @@ static int write_extradata(FFV1Context *f)
     f->avctx->extradata_size = 10000 + 4 +
                                     (11 * 11 * 5 * 5 * 5 + 11 * 11 * 11) * 32;
     f->avctx->extradata = av_malloc(f->avctx->extradata_size);
+    if (!f->avctx->extradata)
+        return AVERROR(ENOMEM);
     ff_init_range_encoder(c, f->avctx->extradata, f->avctx->extradata_size);
     ff_build_rac_states(c, 0.05 * (1LL << 32), 256 - 8);
 
     put_symbol(c, state, f->version, 0);
     if (f->version > 2) {
         if (f->version == 3)
-            f->minor_version = 4;
-        put_symbol(c, state, f->minor_version, 0);
+            f->micro_version = 4;
+        put_symbol(c, state, f->micro_version, 0);
     }
 
     put_symbol(c, state, f->ac, 0);
@@ -649,7 +651,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
     if ((avctx->flags & (CODEC_FLAG_PASS1|CODEC_FLAG_PASS2)) || avctx->slices>1)
         s->version = FFMAX(s->version, 2);
 
-    if (avctx->level == 3 || (s->version==2 && avctx->strict_std_compliance > FF_COMPLIANCE_EXPERIMENTAL)) {
+    if (avctx->level == 3 || (avctx->level <= 0 && s->version == 2)) {
         s->version = 3;
     }
 
@@ -657,7 +659,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
         s->ec = (s->version >= 3);
     }
 
-    if (s->version >= 2 && avctx->strict_std_compliance > FF_COMPLIANCE_EXPERIMENTAL) {
+    if ((s->version == 2 || s->version>3) && avctx->strict_std_compliance > FF_COMPLIANCE_EXPERIMENTAL) {
         av_log(avctx, AV_LOG_ERROR, "Version 2 needed for requested features but version 2 is experimental and not enabled\n");
         return AVERROR_INVALIDDATA;
     }
@@ -902,7 +904,8 @@ static av_cold int encode_init(AVCodecContext *avctx)
                avctx->slices);
         return AVERROR(ENOSYS);
 slices_ok:
-        write_extradata(s);
+        if ((ret = write_extradata(s)) < 0)
+            return ret;
     }
 
     if ((ret = ffv1_init_slice_contexts(s)) < 0)
