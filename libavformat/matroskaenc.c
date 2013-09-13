@@ -307,14 +307,14 @@ static int mkv_add_seekhead_entry(mkv_seekhead *seekhead, unsigned int elementid
     if (seekhead->max_entries > 0 && seekhead->max_entries <= seekhead->num_entries)
         return -1;
 
-    entries = av_realloc(entries, (seekhead->num_entries + 1) * sizeof(mkv_seekhead_entry));
+    entries = av_realloc_array(entries, seekhead->num_entries + 1, sizeof(mkv_seekhead_entry));
     if (entries == NULL)
         return AVERROR(ENOMEM);
-
-    entries[seekhead->num_entries  ].elementid = elementid;
-    entries[seekhead->num_entries++].segmentpos = filepos - seekhead->segment_offset;
-
     seekhead->entries = entries;
+
+    seekhead->entries[seekhead->num_entries].elementid    = elementid;
+    seekhead->entries[seekhead->num_entries++].segmentpos = filepos - seekhead->segment_offset;
+
     return 0;
 }
 
@@ -365,7 +365,7 @@ static int64_t mkv_write_seekhead(AVIOContext *pb, mkv_seekhead *seekhead)
         currentpos = seekhead->filepos;
     }
 fail:
-    av_free(seekhead->entries);
+    av_freep(&seekhead->entries);
     av_free(seekhead);
 
     return currentpos;
@@ -388,16 +388,16 @@ static int mkv_add_cuepoint(mkv_cues *cues, int stream, int64_t ts, int64_t clus
     if (ts < 0)
         return 0;
 
-    entries = av_realloc(entries, (cues->num_entries + 1) * sizeof(mkv_cuepoint));
+    entries = av_realloc_array(entries, cues->num_entries + 1, sizeof(mkv_cuepoint));
     if (entries == NULL)
         return AVERROR(ENOMEM);
-
-    entries[cues->num_entries  ].pts = ts;
-    entries[cues->num_entries  ].tracknum = stream + 1;
-    entries[cues->num_entries  ].cluster_pos = cluster_pos - cues->segment_offset;
-    entries[cues->num_entries++].relative_pos = relative_pos;
-
     cues->entries = entries;
+
+    cues->entries[cues->num_entries].pts           = ts;
+    cues->entries[cues->num_entries].tracknum      = stream + 1;
+    cues->entries[cues->num_entries].cluster_pos   = cluster_pos - cues->segment_offset;
+    cues->entries[cues->num_entries++].relative_pos= relative_pos;
+
     return 0;
 }
 
@@ -1685,7 +1685,7 @@ static int mkv_write_trailer(AVFormatContext *s)
     }
 
     end_ebml_master(pb, mkv->segment);
-    av_free(mkv->tracks);
+    av_freep(&mkv->tracks);
     av_freep(&mkv->cues->entries);
     av_freep(&mkv->cues);
 
