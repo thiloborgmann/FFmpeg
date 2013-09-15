@@ -56,7 +56,6 @@ typedef struct {
 typedef struct {
     const AVClass *class;
     int nb_planes;
-    int linesize[4];
     int bytewidth[4];
     int height[4];
     FilterParams all;
@@ -191,14 +190,11 @@ static int config_input(AVFilterLink *inlink)
 
     n->nb_planes = av_pix_fmt_count_planes(inlink->format);
 
-    if ((ret = av_image_fill_linesizes(n->linesize, inlink->format, inlink->w)) < 0)
+    if ((ret = av_image_fill_linesizes(n->bytewidth, inlink->format, inlink->w)) < 0)
         return ret;
 
     n->height[1] = n->height[2] = FF_CEIL_RSHIFT(inlink->h, desc->log2_chroma_h);
     n->height[0] = n->height[3] = inlink->h;
-
-    n->bytewidth [1] = n->bytewidth [2] = FF_CEIL_RSHIFT(inlink->w, desc->log2_chroma_w) * ((desc->comp[0].depth_minus1 + 1) / 8);
-    n->bytewidth [0] = n->bytewidth [3] = inlink->w * ((desc->comp[0].depth_minus1 + 1) / 8);
 
     return 0;
 }
