@@ -517,14 +517,15 @@ static av_cold int decode_end(AVCodecContext *avctx)
 
     av_frame_free(&c->frame);
 
-    av_free(c->curbits);
-    av_free(c->curmask);
-    av_free(c->screendta);
+    av_freep(&c->curbits);
+    av_freep(&c->curmask);
+    av_freep(&c->screendta);
     return 0;
 }
 
 AVCodec ff_vmnc_decoder = {
     .name           = "vmnc",
+    .long_name      = NULL_IF_CONFIG_SMALL("VMware Screen Codec / VMware Video"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_VMNC,
     .priv_data_size = sizeof(VmncContext),
@@ -532,5 +533,4 @@ AVCodec ff_vmnc_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("VMware Screen Codec / VMware Video"),
 };
