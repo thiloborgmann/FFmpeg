@@ -56,9 +56,64 @@
 # include <iconv.h>
 #endif
 
+#if HAVE_PTHREADS
+#include <pthread.h>
+#elif HAVE_W32THREADS
+#include "compat/w32pthreads.h"
+#elif HAVE_OS2THREADS
+#include "compat/os2threads.h"
+#endif
+
+#if HAVE_PTHREADS || HAVE_W32THREADS || HAVE_OS2THREADS
+static int default_lockmgr_cb(void **arg, enum AVLockOp op)
+{
+    void * volatile * mutex = arg;
+    int err;
+
+    switch (op) {
+    case AV_LOCK_CREATE:
+        return 0;
+    case AV_LOCK_OBTAIN:
+        if (!*mutex) {
+            pthread_mutex_t *tmp = av_malloc(sizeof(pthread_mutex_t));
+            if (!tmp)
+                return AVERROR(ENOMEM);
+            if ((err = pthread_mutex_init(tmp, NULL))) {
+                av_free(tmp);
+                return AVERROR(err);
+            }
+            if (avpriv_atomic_ptr_cas(mutex, NULL, tmp)) {
+                pthread_mutex_destroy(tmp);
+                av_free(tmp);
+            }
+        }
+
+        if ((err = pthread_mutex_lock(*mutex)))
+            return AVERROR(err);
+
+        return 0;
+    case AV_LOCK_RELEASE:
+        if ((err = pthread_mutex_unlock(*mutex)))
+            return AVERROR(err);
+
+        return 0;
+    case AV_LOCK_DESTROY:
+        if (*mutex)
+            pthread_mutex_destroy(*mutex);
+        av_free(*mutex);
+        avpriv_atomic_ptr_cas(mutex, *mutex, NULL);
+        return 0;
+    }
+    return 1;
+}
+static int (*lockmgr_cb)(void **mutex, enum AVLockOp op) = default_lockmgr_cb;
+#else
+static int (*lockmgr_cb)(void **mutex, enum AVLockOp op) = NULL;
+#endif
+
+
 volatile int ff_avcodec_locked;
 static int volatile entangled_thread_counter = 0;
-static int (*lockmgr_cb)(void **mutex, enum AVLockOp op);
 static void *codec_mutex;
 static void *avformat_mutex;
 
@@ -1044,6 +1099,7 @@ void avcodec_free_frame(AVFrame **frame)
 MAKE_ACCESSORS(AVCodecContext, codec, AVRational, pkt_timebase)
 MAKE_ACCESSORS(AVCodecContext, codec, const AVCodecDescriptor *, codec_descriptor)
 MAKE_ACCESSORS(AVCodecContext, codec, int, lowres)
+MAKE_ACCESSORS(AVCodecContext, codec, int, seek_preroll)
 
 int av_codec_get_max_lowres(const AVCodec *codec)
 {
@@ -1898,46 +1954,59 @@ static int64_t guess_correct_pts(AVCodecContext *ctx,
     return pts;
 }
 
-static void apply_param_change(AVCodecContext *avctx, AVPacket *avpkt)
+static int apply_param_change(AVCodecContext *avctx, AVPacket *avpkt)
 {
     int size = 0;
     const uint8_t *data;
     uint32_t flags;
 
-    if (!(avctx->codec->capabilities & CODEC_CAP_PARAM_CHANGE))
-        return;
-
     data = av_packet_get_side_data(avpkt, AV_PKT_DATA_PARAM_CHANGE, &size);
-    if (!data || size < 4)
-        return;
+    if (!data)
+        return 0;
+
+    if (!(avctx->codec->capabilities & CODEC_CAP_PARAM_CHANGE)) {
+        av_log(avctx, AV_LOG_ERROR, "This decoder does not support parameter "
+               "changes, but PARAM_CHANGE side data was sent to it.\n");
+        return AVERROR(EINVAL);
+    }
+
+    if (size < 4)
+        goto fail;
+
     flags = bytestream_get_le32(&data);
     size -= 4;
-    if (size < 4) /* Required for any of the changes */
-        return;
+
     if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT) {
+        if (size < 4)
+            goto fail;
         avctx->channels = bytestream_get_le32(&data);
         size -= 4;
     }
     if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT) {
         if (size < 8)
-            return;
+            goto fail;
         avctx->channel_layout = bytestream_get_le64(&data);
         size -= 8;
     }
-    if (size < 4)
-        return;
     if (flags & AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE) {
+        if (size < 4)
+            goto fail;
         avctx->sample_rate = bytestream_get_le32(&data);
         size -= 4;
     }
     if (flags & AV_SIDE_DATA_PARAM_CHANGE_DIMENSIONS) {
         if (size < 8)
-            return;
+            goto fail;
         avctx->width  = bytestream_get_le32(&data);
         avctx->height = bytestream_get_le32(&data);
         avcodec_set_dimensions(avctx, avctx->width, avctx->height);
         size -= 8;
     }
+
+    return 0;
+fail:
+    av_log(avctx, AV_LOG_ERROR, "PARAM_CHANGE side data too small.\n");
+    return AVERROR_INVALIDDATA;
 }
 
 static int add_metadata_from_side_data(AVCodecContext *avctx, AVFrame *frame)
@@ -1951,10 +2020,17 @@ static int add_metadata_from_side_data(AVCodecContext *avctx, AVFrame *frame)
     if (!side_metadata)
         goto end;
     end = side_metadata + size;
+    if (size && end[-1])
+        return AVERROR_INVALIDDATA;
     while (side_metadata < end) {
         const uint8_t *key = side_metadata;
         const uint8_t *val = side_metadata + strlen(key) + 1;
-        int ret = av_dict_set(avpriv_frame_get_metadatap(frame), key, val, 0);
+        int ret;
+
+        if (val >= end)
+            return AVERROR_INVALIDDATA;
+
+        ret = av_dict_set(avpriv_frame_get_metadatap(frame), key, val, 0);
         if (ret < 0)
             break;
         side_metadata = val + strlen(val) + 1;
@@ -1990,7 +2066,13 @@ int attribute_align_arg avcodec_decode_video2(AVCodecContext *avctx, AVFrame *pi
 
     if ((avctx->codec->capabilities & CODEC_CAP_DELAY) || avpkt->size || (avctx->active_thread_type & FF_THREAD_FRAME)) {
         int did_split = av_packet_split_side_data(&tmp);
-        apply_param_change(avctx, &tmp);
+        ret = apply_param_change(avctx, &tmp);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR, "Error applying parameter changes.\n");
+            if (avctx->err_recognition & AV_EF_EXPLODE)
+                goto fail;
+        }
+
         avctx->pkt = &tmp;
         if (HAVE_THREADS && avctx->active_thread_type & FF_THREAD_FRAME)
             ret = ff_thread_decode_frame(avctx, picture, got_picture_ptr,
@@ -2014,6 +2096,7 @@ int attribute_align_arg avcodec_decode_video2(AVCodecContext *avctx, AVFrame *pi
         }
         add_metadata_from_side_data(avctx, picture);
 
+fail:
         emms_c(); //needed to avoid an emms_c() call before every return;
 
         avctx->pkt = NULL;
@@ -2132,7 +2215,12 @@ int attribute_align_arg avcodec_decode_audio4(AVCodecContext *avctx,
         // copy to ensure we do not change avpkt
         AVPacket tmp = *avpkt;
         int did_split = av_packet_split_side_data(&tmp);
-        apply_param_change(avctx, &tmp);
+        ret = apply_param_change(avctx, &tmp);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR, "Error applying parameter changes.\n");
+            if (avctx->err_recognition & AV_EF_EXPLODE)
+                goto fail;
+        }
 
         avctx->pkt = &tmp;
         if (HAVE_THREADS && avctx->active_thread_type & FF_THREAD_FRAME)
@@ -2212,7 +2300,7 @@ int attribute_align_arg avcodec_decode_audio4(AVCodecContext *avctx,
                 frame->nb_samples -= discard_padding;
             }
         }
-
+fail:
         avctx->pkt = NULL;
         if (did_split) {
             av_packet_free_side_data(&tmp);
@@ -2259,7 +2347,7 @@ static int recode_subtitle(AVCodecContext *avctx,
     AVPacket tmp;
 #endif
 
-    if (avctx->sub_charenc_mode != FF_SUB_CHARENC_MODE_PRE_DECODER)
+    if (avctx->sub_charenc_mode != FF_SUB_CHARENC_MODE_PRE_DECODER || inpkt->size == 0)
         return 0;
 
 #if CONFIG_ICONV
@@ -2330,6 +2418,12 @@ int avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubtitle *sub,
 {
     int i, ret = 0;
 
+    if (!avpkt->data && avpkt->size) {
+        av_log(avctx, AV_LOG_ERROR, "invalid packet: NULL data, size != 0\n");
+        return AVERROR(EINVAL);
+    }
+    if (!avctx->codec)
+        return AVERROR(EINVAL);
     if (avctx->codec->type != AVMEDIA_TYPE_SUBTITLE) {
         av_log(avctx, AV_LOG_ERROR, "Invalid media type for subtitles\n");
         return AVERROR(EINVAL);
@@ -2338,7 +2432,7 @@ int avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubtitle *sub,
     *got_sub_ptr = 0;
     avcodec_get_subtitle_defaults(sub);
 
-    if (avpkt->size) {
+    if ((avctx->codec->capabilities & CODEC_CAP_DELAY) || avpkt->size) {
         AVPacket pkt_recoded;
         AVPacket tmp = *avpkt;
         int did_split = av_packet_split_side_data(&tmp);
@@ -3253,6 +3347,23 @@ void ff_thread_await_progress(ThreadFrame *f, int progress, int field)
 int ff_thread_can_start_frame(AVCodecContext *avctx)
 {
     return 1;
+}
+
+int ff_alloc_entries(AVCodecContext *avctx, int count)
+{
+    return 0;
+}
+
+void ff_reset_entries(AVCodecContext *avctx)
+{
+}
+
+void ff_thread_await_progress2(AVCodecContext *avctx, int field, int thread, int shift)
+{
+}
+
+void ff_thread_report_progress2(AVCodecContext *avctx, int field, int thread, int n)
+{
 }
 
 #endif

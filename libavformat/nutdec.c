@@ -415,9 +415,7 @@ static int decode_stream_header(NUTContext *nut)
 
     GET_V(st->codec->extradata_size, tmp < (1 << 30));
     if (st->codec->extradata_size) {
-        st->codec->extradata = av_mallocz(st->codec->extradata_size +
-                                          FF_INPUT_BUFFER_PADDING_SIZE);
-        if (!st->codec->extradata)
+        if (ff_alloc_extradata(st->codec, st->codec->extradata_size))
             return AVERROR(ENOMEM);
         avio_read(bc, st->codec->extradata, st->codec->extradata_size);
     }
@@ -560,6 +558,7 @@ static int decode_syncpoint(NUTContext *nut, int64_t *ts, int64_t *back_ptr)
     AVIOContext *bc    = s->pb;
     int64_t end;
     uint64_t tmp;
+    int ret;
 
     nut->last_syncpoint_pos = avio_tell(bc) - 8;
 
@@ -581,7 +580,9 @@ static int decode_syncpoint(NUTContext *nut, int64_t *ts, int64_t *back_ptr)
 
     *ts = tmp / nut->time_base_count *
           av_q2d(nut->time_base[tmp % nut->time_base_count]) * AV_TIME_BASE;
-    ff_nut_add_sp(nut, nut->last_syncpoint_pos, *back_ptr, *ts);
+
+    if ((ret = ff_nut_add_sp(nut, nut->last_syncpoint_pos, *back_ptr, *ts)) < 0)
+        return ret;
 
     return 0;
 }

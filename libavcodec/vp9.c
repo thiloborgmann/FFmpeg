@@ -1169,6 +1169,7 @@ static void decode_mode(AVCodecContext *ctx)
         for (y = 0; y < h4; y++)
             for (x = 0; x < w4; x++)
                 pred = FFMIN(pred, s->segmentation_map[(y + row) * 8 * s->sb_cols + x + col]);
+        av_assert1(pred < 8);
         b->seg_id = pred;
 
         memset(&s->above_segpred_ctx[col], 1, w4);
@@ -1909,7 +1910,7 @@ static int decode_coeffs(AVCodecContext *ctx)
     const int16_t (*uvnb)[2] = vp9_scans_nb[b->uvtx][DCT_DCT];
     uint8_t *a = &s->above_y_nnz_ctx[col * 2];
     uint8_t *l = &s->left_y_nnz_ctx[(row & 7) << 1];
-    static const int16_t band_counts[4][6] = {
+    static const int16_t band_counts[4][8] = {
         { 1, 2, 3, 4,  3,   16 - 13 },
         { 1, 2, 3, 4, 11,   64 - 21 },
         { 1, 2, 3, 4, 11,  256 - 21 },
@@ -2154,7 +2155,7 @@ static void intra_recon(AVCodecContext *ctx, ptrdiff_t y_off, ptrdiff_t uv_off)
             LOCAL_ALIGNED_16(uint8_t, a_buf, [48]);
             uint8_t *a = &a_buf[16], l[32];
             enum TxfmType txtp = vp9_intra_txfm_type[mode];
-            int eob = b->tx > TX_8X8 ? AV_RN16A(&s->eob[n]) : s->eob[n];
+            int eob = b->skip ? 0 : b->tx > TX_8X8 ? AV_RN16A(&s->eob[n]) : s->eob[n];
 
             mode = check_intra_mode(s, mode, &a, ptr_r, s->f->linesize[0],
                                     ptr, b->y_stride, l,
@@ -2184,7 +2185,7 @@ static void intra_recon(AVCodecContext *ctx, ptrdiff_t y_off, ptrdiff_t uv_off)
                 int mode = b->uvmode;
                 LOCAL_ALIGNED_16(uint8_t, a_buf, [48]);
                 uint8_t *a = &a_buf[16], l[32];
-                int eob = b->uvtx > TX_8X8 ? AV_RN16A(&s->uveob[p][n]) : s->uveob[p][n];
+                int eob = b->skip ? 0 : b->uvtx > TX_8X8 ? AV_RN16A(&s->uveob[p][n]) : s->uveob[p][n];
 
                 mode = check_intra_mode(s, mode, &a, ptr_r, s->f->linesize[1],
                                         ptr, b->uv_stride, l,
@@ -3312,6 +3313,7 @@ static int vp9_decode_frame(AVCodecContext *ctx, void *out_pic,
     for (i = 0; i < 10; i++)
         if (!s->fb[i]->data[0])
             break;
+    av_assert0(i < 10);
     s->f = s->fb[i];
     if ((res = ff_get_buffer(ctx, s->f,
                              s->refreshrefmask ? AV_GET_BUFFER_FLAG_REF : 0)) < 0)
@@ -3493,14 +3495,14 @@ static int vp9_decode_packet(AVCodecContext *avctx, void *out_pic,
                 case_n(3, AV_RL24(idx));
                 case_n(4, AV_RL32(idx));
             }
-            return size;
+            return avpkt->size;
         }
     }
     // if we get here, there was no valid superframe index, i.e. this is just
     // one whole single frame - decode it as such from the complete input buf
     if ((res = vp9_decode_frame(avctx, out_pic, got_frame, data, size)) < 0)
         return res;
-    return size;
+    return avpkt->size;
 }
 
 static void vp9_decode_flush(AVCodecContext *ctx)

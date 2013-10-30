@@ -41,41 +41,9 @@
 #include "libavutil/time.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
-#include "avdevice.h"
 #include "libavformat/internal.h"
-
-struct rgb_pixfmt_map_entry {
-    int bits_per_pixel;
-    int red_offset, green_offset, blue_offset, alpha_offset;
-    enum AVPixelFormat pixfmt;
-};
-
-static const struct rgb_pixfmt_map_entry rgb_pixfmt_map[] = {
-    // bpp, red_offset,  green_offset, blue_offset, alpha_offset, pixfmt
-    {  32,       0,           8,          16,           24,   AV_PIX_FMT_RGBA  },
-    {  32,      16,           8,           0,           24,   AV_PIX_FMT_BGRA  },
-    {  32,       8,          16,          24,            0,   AV_PIX_FMT_ARGB  },
-    {  32,       3,           2,           8,            0,   AV_PIX_FMT_ABGR  },
-    {  24,       0,           8,          16,            0,   AV_PIX_FMT_RGB24 },
-    {  24,      16,           8,           0,            0,   AV_PIX_FMT_BGR24 },
-    {  16,      11,           5,           0,           16,   AV_PIX_FMT_RGB565 },
-};
-
-static enum AVPixelFormat get_pixfmt_from_fb_varinfo(struct fb_var_screeninfo *varinfo)
-{
-    int i;
-
-    for (i = 0; i < FF_ARRAY_ELEMS(rgb_pixfmt_map); i++) {
-        const struct rgb_pixfmt_map_entry *entry = &rgb_pixfmt_map[i];
-        if (entry->bits_per_pixel == varinfo->bits_per_pixel &&
-            entry->red_offset     == varinfo->red.offset     &&
-            entry->green_offset   == varinfo->green.offset   &&
-            entry->blue_offset    == varinfo->blue.offset)
-            return entry->pixfmt;
-    }
-
-    return AV_PIX_FMT_NONE;
-}
+#include "avdevice.h"
+#include "fbdev_common.h"
 
 typedef struct {
     AVClass *class;          ///< class for private options
@@ -113,25 +81,25 @@ static av_cold int fbdev_read_header(AVFormatContext *avctx)
         ret = AVERROR(errno);
         av_log(avctx, AV_LOG_ERROR,
                "Could not open framebuffer device '%s': %s\n",
-               avctx->filename, strerror(ret));
+               avctx->filename, av_err2str(ret));
         return ret;
     }
 
     if (ioctl(fbdev->fd, FBIOGET_VSCREENINFO, &fbdev->varinfo) < 0) {
         ret = AVERROR(errno);
         av_log(avctx, AV_LOG_ERROR,
-               "FBIOGET_VSCREENINFO: %s\n", strerror(errno));
+               "FBIOGET_VSCREENINFO: %s\n", av_err2str(ret));
         goto fail;
     }
 
     if (ioctl(fbdev->fd, FBIOGET_FSCREENINFO, &fbdev->fixinfo) < 0) {
         ret = AVERROR(errno);
         av_log(avctx, AV_LOG_ERROR,
-               "FBIOGET_FSCREENINFO: %s\n", strerror(errno));
+               "FBIOGET_FSCREENINFO: %s\n", av_err2str(ret));
         goto fail;
     }
 
-    pix_fmt = get_pixfmt_from_fb_varinfo(&fbdev->varinfo);
+    pix_fmt = ff_get_pixfmt_from_fb_varinfo(&fbdev->varinfo);
     if (pix_fmt == AV_PIX_FMT_NONE) {
         ret = AVERROR(EINVAL);
         av_log(avctx, AV_LOG_ERROR,
@@ -148,7 +116,7 @@ static av_cold int fbdev_read_header(AVFormatContext *avctx)
     fbdev->data = mmap(NULL, fbdev->fixinfo.smem_len, PROT_READ, MAP_SHARED, fbdev->fd, 0);
     if (fbdev->data == MAP_FAILED) {
         ret = AVERROR(errno);
-        av_log(avctx, AV_LOG_ERROR, "Error in mmap(): %s\n", strerror(errno));
+        av_log(avctx, AV_LOG_ERROR, "Error in mmap(): %s\n", av_err2str(ret));
         goto fail;
     }
 
@@ -209,7 +177,7 @@ static int fbdev_read_packet(AVFormatContext *avctx, AVPacket *pkt)
     /* refresh fbdev->varinfo, visible data position may change at each call */
     if (ioctl(fbdev->fd, FBIOGET_VSCREENINFO, &fbdev->varinfo) < 0)
         av_log(avctx, AV_LOG_WARNING,
-               "Error refreshing variable info: %s\n", strerror(errno));
+               "Error refreshing variable info: %s\n", av_err2str(ret));
 
     pkt->pts = curtime;
 
@@ -231,7 +199,7 @@ static av_cold int fbdev_read_close(AVFormatContext *avctx)
 {
     FBDevContext *fbdev = avctx->priv_data;
 
-    munmap(fbdev->data, fbdev->frame_size);
+    munmap(fbdev->data, fbdev->fixinfo.smem_len);
     close(fbdev->fd);
 
     return 0;

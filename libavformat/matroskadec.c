@@ -163,6 +163,8 @@ typedef struct {
     uint64_t default_duration;
     uint64_t flag_default;
     uint64_t flag_forced;
+    uint64_t codec_delay;
+    uint64_t seek_preroll;
     MatroskaTrackVideo video;
     MatroskaTrackAudio audio;
     MatroskaTrackOperation operation;
@@ -410,6 +412,8 @@ static EbmlSyntax matroska_track[] = {
     { MATROSKA_ID_TRACKOPERATION,       EBML_NEST, 0, offsetof(MatroskaTrack,operation), {.n=matroska_track_operation} },
     { MATROSKA_ID_TRACKCONTENTENCODINGS,EBML_NEST, 0, 0, {.n=matroska_track_encodings} },
     { MATROSKA_ID_TRACKMAXBLKADDID,     EBML_UINT, 0, offsetof(MatroskaTrack,max_block_additional_id) },
+    { MATROSKA_ID_CODECDELAY,           EBML_UINT, 0, offsetof(MatroskaTrack,codec_delay) },
+    { MATROSKA_ID_SEEKPREROLL,          EBML_UINT, 0, offsetof(MatroskaTrack,seek_preroll) },
     { MATROSKA_ID_TRACKFLAGENABLED,     EBML_NONE },
     { MATROSKA_ID_TRACKFLAGLACING,      EBML_NONE },
     { MATROSKA_ID_CODECNAME,            EBML_NONE },
@@ -1819,11 +1823,8 @@ static int matroska_read_header(AVFormatContext *s)
                 st->codec->extradata = extradata;
                 st->codec->extradata_size = extradata_size;
             } else if(track->codec_priv.data && track->codec_priv.size > 0){
-                st->codec->extradata = av_mallocz(track->codec_priv.size +
-                                                  FF_INPUT_BUFFER_PADDING_SIZE);
-                if(st->codec->extradata == NULL)
+                if (ff_alloc_extradata(st->codec, track->codec_priv.size))
                     return AVERROR(ENOMEM);
-                st->codec->extradata_size = track->codec_priv.size;
                 memcpy(st->codec->extradata,
                        track->codec_priv.data + extradata_offset,
                        track->codec_priv.size);
@@ -1842,7 +1843,8 @@ static int matroska_read_header(AVFormatContext *s)
                       st->codec->height * track->video.display_width,
                       st->codec-> width * track->video.display_height,
                       255);
-            st->need_parsing = AVSTREAM_PARSE_HEADERS;
+            if (st->codec->codec_id != AV_CODEC_ID_HEVC)
+                st->need_parsing = AVSTREAM_PARSE_HEADERS;
             if (track->default_duration) {
                 av_reduce(&st->avg_frame_rate.num, &st->avg_frame_rate.den,
                           1000000000, track->default_duration, 30000);
@@ -1881,6 +1883,17 @@ static int matroska_read_header(AVFormatContext *s)
             st->codec->bits_per_coded_sample = track->audio.bitdepth;
             if (st->codec->codec_id != AV_CODEC_ID_AAC)
             st->need_parsing = AVSTREAM_PARSE_HEADERS;
+            if (track->codec_delay > 0) {
+                st->codec->delay = av_rescale_q(track->codec_delay,
+                                                (AVRational){1, 1000000000},
+                                                (AVRational){1, st->codec->sample_rate});
+            }
+            if (track->seek_preroll > 0) {
+                av_codec_set_seek_preroll(st->codec,
+                                          av_rescale_q(track->seek_preroll,
+                                                       (AVRational){1, 1000000000},
+                                                       (AVRational){1, st->codec->sample_rate}));
+            }
         } else if (codec_id == AV_CODEC_ID_WEBVTT) {
             st->codec->codec_type = AVMEDIA_TYPE_SUBTITLE;
 
@@ -1916,10 +1929,8 @@ static int matroska_read_header(AVFormatContext *s)
             av_dict_set(&st->metadata, "mimetype", attachements[j].mime, 0);
             st->codec->codec_id = AV_CODEC_ID_NONE;
             st->codec->codec_type = AVMEDIA_TYPE_ATTACHMENT;
-            st->codec->extradata  = av_malloc(attachements[j].bin.size + FF_INPUT_BUFFER_PADDING_SIZE);
-            if(st->codec->extradata == NULL)
+            if (ff_alloc_extradata(st->codec, attachements[j].bin.size))
                 break;
-            st->codec->extradata_size = attachements[j].bin.size;
             memcpy(st->codec->extradata, attachements[j].bin.data, attachements[j].bin.size);
 
             for (i=0; ff_mkv_mime_tags[i].id != AV_CODEC_ID_NONE; i++) {

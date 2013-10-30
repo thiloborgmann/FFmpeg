@@ -996,7 +996,8 @@ static void update_initial_durations(AVFormatContext *s, AVStream *st,
             }
         }
         if(pktl && pktl->pkt.dts != st->first_dts) {
-            av_log(s, AV_LOG_DEBUG, "first_dts %s not matching first dts %s in the queue\n", av_ts2str(st->first_dts), av_ts2str(pktl->pkt.dts));
+            av_log(s, AV_LOG_DEBUG, "first_dts %s not matching first dts %s (pts %s, duration %d) in the queue\n",
+                   av_ts2str(st->first_dts), av_ts2str(pktl->pkt.dts), av_ts2str(pktl->pkt.pts), pktl->pkt.duration);
             return;
         }
         if(!pktl) {
@@ -1088,25 +1089,6 @@ static void compute_pkt_fields(AVFormatContext *s, AVStream *st,
             pkt->pts += offset;
         if(pkt->dts != AV_NOPTS_VALUE)
             pkt->dts += offset;
-    }
-
-    if (pc && pc->dts_sync_point >= 0) {
-        // we have synchronization info from the parser
-        int64_t den = st->codec->time_base.den * (int64_t) st->time_base.num;
-        if (den > 0) {
-            int64_t num = st->codec->time_base.num * (int64_t) st->time_base.den;
-            if (pkt->dts != AV_NOPTS_VALUE) {
-                // got DTS from the stream, update reference timestamp
-                st->reference_dts = pkt->dts - pc->dts_ref_dts_delta * num / den;
-                pkt->pts = pkt->dts + pc->pts_dts_delta * num / den;
-            } else if (st->reference_dts != AV_NOPTS_VALUE) {
-                // compute DTS based on reference timestamp
-                pkt->dts = st->reference_dts + pc->dts_ref_dts_delta * num / den;
-                pkt->pts = pkt->dts + pc->pts_dts_delta * num / den;
-            }
-            if (pc->dts_sync_point > 0)
-                st->reference_dts = pkt->dts; // new reference
-        }
     }
 
     /* This may be redundant, but it should not hurt. */
@@ -1504,8 +1486,10 @@ return_packet:
     st = s->streams[pkt->stream_index];
     if (st->skip_samples) {
         uint8_t *p = av_packet_new_side_data(pkt, AV_PKT_DATA_SKIP_SAMPLES, 10);
-        AV_WL32(p, st->skip_samples);
-        av_log(s, AV_LOG_DEBUG, "demuxer injecting skip %d\n", st->skip_samples);
+        if (p) {
+            AV_WL32(p, st->skip_samples);
+            av_log(s, AV_LOG_DEBUG, "demuxer injecting skip %d\n", st->skip_samples);
+        }
         st->skip_samples = 0;
     }
 
@@ -1576,7 +1560,6 @@ void ff_read_frame_flush(AVFormatContext *s)
         st->last_IP_pts = AV_NOPTS_VALUE;
         if(st->first_dts == AV_NOPTS_VALUE) st->cur_dts = RELATIVE_TS_BASE;
         else                                st->cur_dts = AV_NOPTS_VALUE; /* we set the current DTS to an unspecified origin */
-        st->reference_dts = AV_NOPTS_VALUE;
 
         st->probe_packets = MAX_PROBE_PACKETS;
 
@@ -1623,6 +1606,9 @@ int ff_add_index_entry(AVIndexEntry **index_entries,
         return -1;
 
     if(timestamp == AV_NOPTS_VALUE)
+        return AVERROR(EINVAL);
+
+    if (size < 0 || size > 0x3FFFFFFF)
         return AVERROR(EINVAL);
 
     if (is_relative(timestamp)) //FIXME this maintains previous behavior but we should shift by the correct offset once known
@@ -2357,7 +2343,6 @@ static void estimate_timings_from_pts(AVFormatContext *ic, int64_t old_offset)
         st= ic->streams[i];
         st->cur_dts= st->first_dts;
         st->last_IP_pts = AV_NOPTS_VALUE;
-        st->reference_dts = AV_NOPTS_VALUE;
     }
 }
 
@@ -2678,6 +2663,26 @@ int av_find_stream_info(AVFormatContext *ic)
 }
 #endif
 
+int ff_alloc_extradata(AVCodecContext *avctx, int size)
+{
+    int ret;
+
+    if (size < 0 || size >= INT32_MAX - FF_INPUT_BUFFER_PADDING_SIZE) {
+        avctx->extradata_size = 0;
+        return AVERROR(EINVAL);
+    }
+    avctx->extradata = av_malloc(size + FF_INPUT_BUFFER_PADDING_SIZE);
+    if (avctx->extradata) {
+        memset(avctx->extradata + size, 0, FF_INPUT_BUFFER_PADDING_SIZE);
+        avctx->extradata_size = size;
+        ret = 0;
+    } else {
+        avctx->extradata_size = 0;
+        ret = AVERROR(ENOMEM);
+    }
+    return ret;
+}
+
 int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
 {
     int i, count, ret = 0, j;
@@ -2930,12 +2935,9 @@ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
         if(st->parser && st->parser->parser->split && !st->codec->extradata){
             int i= st->parser->parser->split(st->codec, pkt->data, pkt->size);
             if (i > 0 && i < FF_MAX_EXTRADATA_SIZE) {
-                st->codec->extradata_size= i;
-                st->codec->extradata= av_malloc(st->codec->extradata_size + FF_INPUT_BUFFER_PADDING_SIZE);
-                if (!st->codec->extradata)
+                if (ff_alloc_extradata(st->codec, i))
                     return AVERROR(ENOMEM);
                 memcpy(st->codec->extradata, pkt->data, st->codec->extradata_size);
-                memset(st->codec->extradata + i, 0, FF_INPUT_BUFFER_PADDING_SIZE);
             }
         }
 
@@ -3363,7 +3365,6 @@ AVStream *avformat_new_stream(AVFormatContext *s, const AVCodec *c)
     st->last_IP_pts = AV_NOPTS_VALUE;
     for(i=0; i<MAX_REORDER_DELAY+1; i++)
         st->pts_buffer[i]= AV_NOPTS_VALUE;
-    st->reference_dts = AV_NOPTS_VALUE;
 
     st->sample_aspect_ratio = (AVRational){0,1};
 
@@ -4251,10 +4252,7 @@ void ff_generate_avci_extradata(AVStream *st)
     if (!size)
         return;
     av_freep(&st->codec->extradata);
-    st->codec->extradata_size = 0;
-    st->codec->extradata = av_mallocz(size + FF_INPUT_BUFFER_PADDING_SIZE);
-    if (!st->codec->extradata)
+    if (ff_alloc_extradata(st->codec, size))
         return;
     memcpy(st->codec->extradata, data, size);
-    st->codec->extradata_size = size;
 }

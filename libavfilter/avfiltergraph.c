@@ -224,7 +224,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
  * A graph is considered valid if all its input and output pads are
  * connected.
  *
- * @return 0 in case of success, a negative value otherwise
+ * @return >= 0 in case of success, a negative value otherwise
  */
 static int graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
 {
@@ -262,7 +262,7 @@ static int graph_check_validity(AVFilterGraph *graph, AVClass *log_ctx)
 /**
  * Configure all the links of graphctx.
  *
- * @return 0 in case of success, a negative value otherwise
+ * @return >= 0 in case of success, a negative value otherwise
  */
 static int graph_config_links(AVFilterGraph *graph, AVClass *log_ctx)
 {
@@ -392,6 +392,19 @@ static int can_merge_formats(AVFilterFormats *a_arg,
         return 1;
     a = clone_filter_formats(a_arg);
     b = clone_filter_formats(b_arg);
+
+    if (!a || !b) {
+        if (a)
+            av_freep(&a->formats);
+        if (b)
+            av_freep(&b->formats);
+
+        av_freep(&a);
+        av_freep(&b);
+
+        return 0;
+    }
+
     if (is_sample_rate) {
         ret = ff_merge_samplerates(a, b);
     } else {

@@ -1077,11 +1077,8 @@ static int mov_read_wave(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         st->codec->codec_id == AV_CODEC_ID_SPEEX) {
         // pass all frma atom to codec, needed at least for QDMC and QDM2
         av_free(st->codec->extradata);
-        st->codec->extradata_size = 0;
-        st->codec->extradata = av_mallocz(atom.size + FF_INPUT_BUFFER_PADDING_SIZE);
-        if (!st->codec->extradata)
+        if (ff_alloc_extradata(st->codec, atom.size))
             return AVERROR(ENOMEM);
-        st->codec->extradata_size = atom.size;
         avio_read(pb, st->codec->extradata, atom.size);
     } else if (atom.size > 8) { /* to read frma, esds atoms */
         int ret;
@@ -1117,11 +1114,8 @@ static int mov_read_glbl(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             return mov_read_default(c, pb, atom);
     }
     av_free(st->codec->extradata);
-    st->codec->extradata_size = 0;
-    st->codec->extradata = av_mallocz(atom.size + FF_INPUT_BUFFER_PADDING_SIZE);
-    if (!st->codec->extradata)
+    if (ff_alloc_extradata(st->codec, atom.size))
         return AVERROR(ENOMEM);
-    st->codec->extradata_size = atom.size;
     avio_read(pb, st->codec->extradata, atom.size);
     return 0;
 }
@@ -1143,11 +1137,8 @@ static int mov_read_dvc1(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         return 0;
 
     av_free(st->codec->extradata);
-    st->codec->extradata_size = 0;
-    st->codec->extradata = av_mallocz(atom.size - 7 + FF_INPUT_BUFFER_PADDING_SIZE);
-    if (!st->codec->extradata)
+    if (ff_alloc_extradata(st->codec, atom.size - 7))
         return AVERROR(ENOMEM);
-    st->codec->extradata_size = atom.size - 7;
     avio_seek(pb, 6, SEEK_CUR);
     avio_read(pb, st->codec->extradata, st->codec->extradata_size);
     return 0;
@@ -1172,11 +1163,8 @@ static int mov_read_strf(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         return AVERROR_INVALIDDATA;
 
     av_free(st->codec->extradata);
-    st->codec->extradata_size = 0;
-    st->codec->extradata = av_mallocz(atom.size - 40 + FF_INPUT_BUFFER_PADDING_SIZE);
-    if (!st->codec->extradata)
+    if (ff_alloc_extradata(st->codec, atom.size - 40))
         return AVERROR(ENOMEM);
-    st->codec->extradata_size = atom.size - 40;
     avio_skip(pb, 40);
     avio_read(pb, st->codec->extradata, atom.size - 40);
     return 0;
@@ -1491,9 +1479,7 @@ static int mov_parse_stsd_data(MOVContext *c, AVIOContext *pb,
                                 int size)
 {
     if (st->codec->codec_tag == MKTAG('t','m','c','d')) {
-        st->codec->extradata_size = size;
-        st->codec->extradata = av_malloc(size + FF_INPUT_BUFFER_PADDING_SIZE);
-        if (!st->codec->extradata)
+        if (ff_alloc_extradata(st->codec, size))
             return AVERROR(ENOMEM);
         avio_read(pb, st->codec->extradata, size);
         if (size > 16) {
@@ -1604,8 +1590,11 @@ static int mov_skip_multiple_stsd(MOVContext *c, AVIOContext *pb,
         avio_skip(pb, size);
         return 1;
     }
-    if (codec_tag == AV_RL32("avc1"))
-        av_log(c->fc, AV_LOG_WARNING, "Concatenated H.264 might not play corrently.\n");
+    if ( codec_tag == AV_RL32("avc1") ||
+         codec_tag == AV_RL32("hvc1") ||
+         codec_tag == AV_RL32("hev1")
+    )
+        av_log(c->fc, AV_LOG_WARNING, "Concatenated H.264 or H.265 might not play correctly.\n");
 
     return 0;
 }
@@ -1670,7 +1659,7 @@ int ff_mov_read_stsd_entries(MOVContext *c, AVIOContext *pb, int entries)
             if (ret < 0)
                 return ret;
         }
-        /* this will read extra atoms at the end (wave, alac, damr, avcC, SMI ...) */
+        /* this will read extra atoms at the end (wave, alac, damr, avcC, hvcC, SMI ...) */
         a.size = size - (avio_tell(pb) - start_pos);
         if (a.size > 8) {
             if ((ret = mov_read_default(c, pb, a)) < 0)
@@ -2976,6 +2965,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('c','h','a','n'), mov_read_chan }, /* channel layout */
 { MKTAG('d','v','c','1'), mov_read_dvc1 },
 { MKTAG('s','b','g','p'), mov_read_sbgp },
+{ MKTAG('h','v','c','C'), mov_read_glbl },
 { MKTAG('u','u','i','d'), mov_read_uuid },
 { MKTAG('C','i','n', 0x8e), mov_read_targa_y216 },
 { 0, NULL }

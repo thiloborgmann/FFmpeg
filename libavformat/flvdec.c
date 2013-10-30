@@ -191,7 +191,7 @@ static void flv_set_audio_codec(AVFormatContext *s, AVStream *astream,
         acodec->codec_id    = AV_CODEC_ID_PCM_ALAW;
         break;
     default:
-        av_log(s, AV_LOG_INFO, "Unsupported audio codec (%x)\n",
+        avpriv_request_sample(s, "Audio codec (%x)",
                flv_codecid >> FLV_AUDIO_CODECID_OFFSET);
         acodec->codec_tag = flv_codecid >> FLV_AUDIO_CODECID_OFFSET;
     }
@@ -246,9 +246,7 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
             vcodec->codec_id = AV_CODEC_ID_VP6A;
         if (read) {
             if (vcodec->extradata_size != 1) {
-                vcodec->extradata = av_malloc(1 + FF_INPUT_BUFFER_PADDING_SIZE);
-                if (vcodec->extradata)
-                    vcodec->extradata_size = 1;
+                ff_alloc_extradata(vcodec, 1);
             }
             if (vcodec->extradata)
                 vcodec->extradata[0] = avio_r8(s->pb);
@@ -263,7 +261,7 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
         vcodec->codec_id = AV_CODEC_ID_MPEG4;
         return 3;
     default:
-        av_log(s, AV_LOG_INFO, "Unsupported video codec (%x)\n", flv_codecid);
+        avpriv_request_sample(s, "Video codec (%x)", flv_codecid);
         vcodec->codec_tag = flv_codecid;
     }
 
@@ -616,10 +614,8 @@ static int flv_read_close(AVFormatContext *s)
 static int flv_get_extradata(AVFormatContext *s, AVStream *st, int size)
 {
     av_free(st->codec->extradata);
-    st->codec->extradata = av_mallocz(size + FF_INPUT_BUFFER_PADDING_SIZE);
-    if (!st->codec->extradata)
+    if (ff_alloc_extradata(st->codec, size))
         return AVERROR(ENOMEM);
-    st->codec->extradata_size = size;
     avio_read(s->pb, st->codec->extradata, st->codec->extradata_size);
     return 0;
 }

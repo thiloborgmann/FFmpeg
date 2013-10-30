@@ -452,6 +452,11 @@ av_cold int ff_MPV_encode_init(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_ERROR, "b frames not supported by codec\n");
         return -1;
     }
+    if (s->max_b_frames < 0) {
+        av_log(avctx, AV_LOG_ERROR,
+               "max b frames must be 0 or positive for mpegvideo based encoders\n");
+        return -1;
+    }
 
     if ((s->codec_id == AV_CODEC_ID_MPEG4 ||
          s->codec_id == AV_CODEC_ID_H263  ||
@@ -984,8 +989,8 @@ static int load_input_picture(MpegEncContext *s, const AVFrame *pic_arg)
         if (pic_arg->linesize[2] != s->uvlinesize)
             direct = 0;
 
-        av_dlog(s->avctx, "%d %d %d %d\n", pic_arg->linesize[0],
-                pic_arg->linesize[1], (int) s->linesize, (int) s->uvlinesize);
+        av_dlog(s->avctx, "%d %d %td %td\n", pic_arg->linesize[0],
+                pic_arg->linesize[1], s->linesize, s->uvlinesize);
 
         if (direct) {
             i = ff_find_unused_picture(s, 1);

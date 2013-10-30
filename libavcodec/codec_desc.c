@@ -226,9 +226,9 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .props     = AV_CODEC_PROP_LOSSY | AV_CODEC_PROP_LOSSLESS,
     },
     {
-        .id        = AV_CODEC_ID_H265,
+        .id        = AV_CODEC_ID_HEVC,
         .type      = AVMEDIA_TYPE_VIDEO,
-        .name      = "h265",
+        .name      = "hevc",
         .long_name = NULL_IF_CONFIG_SMALL("H.265 / HEVC"),
         .props     = AV_CODEC_PROP_LOSSY | AV_CODEC_PROP_LOSSLESS,
     },
@@ -1851,6 +1851,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .type      = AVMEDIA_TYPE_AUDIO,
         .name      = "adpcm_ima_rad",
         .long_name = NULL_IF_CONFIG_SMALL("ADPCM IMA Radical"),
+        .props     = AV_CODEC_PROP_LOSSY,
+    },
+    {
+        .id        = AV_CODEC_ID_ADPCM_G726LE,
+        .type      = AVMEDIA_TYPE_AUDIO,
+        .name      = "adpcm_g726le",
+        .long_name = NULL_IF_CONFIG_SMALL("G.726 ADPCM little-endian"),
         .props     = AV_CODEC_PROP_LOSSY,
     },
 

@@ -821,13 +821,6 @@ static av_cold int init_hscaler_mmxext(int dstW, int xInc, uint8_t *filterCode,
 }
 #endif /* HAVE_MMXEXT_INLINE */
 
-static void getSubSampleFactors(int *h, int *v, enum AVPixelFormat format)
-{
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(format);
-    *h = desc->log2_chroma_w;
-    *v = desc->log2_chroma_h;
-}
-
 static void fill_rgb2yuv_table(SwsContext *c, const int table[4], int dstRange)
 {
     int64_t W, V, Z, Cy, Cu, Cv;
@@ -991,13 +984,13 @@ int sws_setColorspaceDetails(struct SwsContext *c, const int inv_table[4],
     c->srcFormatBpp = av_get_bits_per_pixel(desc_src);
 
     if (!isYUV(c->dstFormat) && !isGray(c->dstFormat)) {
-    ff_yuv2rgb_c_init_tables(c, inv_table, srcRange, brightness,
-                             contrast, saturation);
-    // FIXME factorize
+        ff_yuv2rgb_c_init_tables(c, inv_table, srcRange, brightness,
+                                 contrast, saturation);
+        // FIXME factorize
 
-    if (ARCH_PPC)
-        ff_yuv2rgb_init_tables_ppc(c, inv_table, brightness,
-                                   contrast, saturation);
+        if (ARCH_PPC)
+            ff_yuv2rgb_init_tables_ppc(c, inv_table, brightness,
+                                       contrast, saturation);
     }
 
     fill_rgb2yuv_table(c, table, dstRange);
@@ -1199,12 +1192,22 @@ av_cold int sws_init_context(SwsContext *c, SwsFilter *srcFilter,
                   (dstFilter->lumH && dstFilter->lumH->length > 1) ||
                   (dstFilter->chrH && dstFilter->chrH->length > 1);
 
-    getSubSampleFactors(&c->chrSrcHSubSample, &c->chrSrcVSubSample, srcFormat);
-    getSubSampleFactors(&c->chrDstHSubSample, &c->chrDstVSubSample, dstFormat);
+    av_pix_fmt_get_chroma_sub_sample(srcFormat, &c->chrSrcHSubSample, &c->chrSrcVSubSample);
+    av_pix_fmt_get_chroma_sub_sample(dstFormat, &c->chrDstHSubSample, &c->chrDstVSubSample);
 
     if (isAnyRGB(dstFormat) && !(flags&SWS_FULL_CHR_H_INT)) {
         if (dstW&1) {
             av_log(c, AV_LOG_DEBUG, "Forcing full internal H chroma due to odd output size\n");
+            flags |= SWS_FULL_CHR_H_INT;
+            c->flags = flags;
+        }
+
+        if (   c->chrSrcHSubSample == 0
+            && c->chrSrcVSubSample == 0
+            && c->dither != SWS_DITHER_BAYER //SWS_FULL_CHR_H_INT is currently not supported with SWS_DITHER_BAYER
+            && !(c->flags & SWS_FAST_BILINEAR)
+        ) {
+            av_log(c, AV_LOG_DEBUG, "Forcing full internal H chroma due to input having non subsampled chroma\n");
             flags |= SWS_FULL_CHR_H_INT;
             c->flags = flags;
         }
@@ -1420,8 +1423,11 @@ av_cold int sws_init_context(SwsContext *c, SwsFilter *srcFilter,
                                 c->hChrFilter, (uint32_t*)c->hChrFilterPos, 4);
 
 #if USE_MMAP
-            mprotect(c->lumMmxextFilterCode, c->lumMmxextFilterCodeSize, PROT_EXEC | PROT_READ);
-            mprotect(c->chrMmxextFilterCode, c->chrMmxextFilterCodeSize, PROT_EXEC | PROT_READ);
+            if (   mprotect(c->lumMmxextFilterCode, c->lumMmxextFilterCodeSize, PROT_EXEC | PROT_READ) == -1
+                || mprotect(c->chrMmxextFilterCode, c->chrMmxextFilterCodeSize, PROT_EXEC | PROT_READ) == -1) {
+                av_log(c, AV_LOG_ERROR, "mprotect failed, cannot use fast bilinear scaler\n");
+                goto fail;
+            }
 #endif
         } else
 #endif /* HAVE_MMXEXT_INLINE */

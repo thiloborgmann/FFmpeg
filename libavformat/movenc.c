@@ -897,6 +897,65 @@ static AVRational find_fps(AVFormatContext *s, AVStream *st)
     return rate;
 }
 
+static int mov_get_mpeg2_xdcam_codec_tag(AVFormatContext *s, MOVTrack *track)
+{
+    int tag = MKTAG('m', '2', 'v', '1'); //fallback tag
+    int interlaced = track->enc->field_order > AV_FIELD_PROGRESSIVE;
+    AVStream *st = track->st;
+    int rate = av_q2d(find_fps(s, st));
+
+    if (track->enc->pix_fmt == AV_PIX_FMT_YUV420P) {
+        if (track->enc->width == 1280 && track->enc->height == 720) {
+            if (!interlaced) {
+                if      (rate == 24) tag = MKTAG('x','d','v','4');
+                else if (rate == 25) tag = MKTAG('x','d','v','5');
+                else if (rate == 30) tag = MKTAG('x','d','v','1');
+                else if (rate == 50) tag = MKTAG('x','d','v','a');
+                else if (rate == 60) tag = MKTAG('x','d','v','9');
+            }
+        } else if (track->enc->width == 1440 && track->enc->height == 1080) {
+            if (!interlaced) {
+                if      (rate == 24) tag = MKTAG('x','d','v','6');
+                else if (rate == 25) tag = MKTAG('x','d','v','7');
+                else if (rate == 30) tag = MKTAG('x','d','v','8');
+            } else {
+                if      (rate == 25) tag = MKTAG('x','d','v','3');
+                else if (rate == 30) tag = MKTAG('x','d','v','2');
+            }
+        } else if (track->enc->width == 1920 && track->enc->height == 1080) {
+            if (!interlaced) {
+                if      (rate == 24) tag = MKTAG('x','d','v','d');
+                else if (rate == 25) tag = MKTAG('x','d','v','e');
+                else if (rate == 30) tag = MKTAG('x','d','v','f');
+            } else {
+                if      (rate == 25) tag = MKTAG('x','d','v','c');
+                else if (rate == 30) tag = MKTAG('x','d','v','b');
+            }
+        }
+    } else if (track->enc->pix_fmt == AV_PIX_FMT_YUV422P) {
+        if (track->enc->width == 1280 && track->enc->height == 720) {
+            if (!interlaced) {
+                if      (rate == 24) tag = MKTAG('x','d','5','4');
+                else if (rate == 25) tag = MKTAG('x','d','5','5');
+                else if (rate == 30) tag = MKTAG('x','d','5','1');
+                else if (rate == 50) tag = MKTAG('x','d','5','a');
+                else if (rate == 60) tag = MKTAG('x','d','5','9');
+            }
+        } else if (track->enc->width == 1920 && track->enc->height == 1080) {
+            if (!interlaced) {
+                if      (rate == 24) tag = MKTAG('x','d','5','d');
+                else if (rate == 25) tag = MKTAG('x','d','5','e');
+                else if (rate == 30) tag = MKTAG('x','d','5','f');
+            } else {
+                if      (rate == 25) tag = MKTAG('x','d','5','c');
+                else if (rate == 30) tag = MKTAG('x','d','5','b');
+            }
+        }
+    }
+
+    return tag;
+}
+
 static const struct {
     enum AVPixelFormat pix_fmt;
     uint32_t tag;
@@ -944,11 +1003,14 @@ static int mov_get_codec_tag(AVFormatContext *s, MOVTrack *track)
                  (track->enc->codec_id == AV_CODEC_ID_DVVIDEO ||
                   track->enc->codec_id == AV_CODEC_ID_RAWVIDEO ||
                   track->enc->codec_id == AV_CODEC_ID_H263 ||
+                  track->enc->codec_id == AV_CODEC_ID_MPEG2VIDEO ||
                   av_get_bits_per_sample(track->enc->codec_id)))) { // pcm audio
         if (track->enc->codec_id == AV_CODEC_ID_DVVIDEO)
             tag = mov_get_dv_codec_tag(s, track);
         else if (track->enc->codec_id == AV_CODEC_ID_RAWVIDEO)
             tag = mov_get_rawvideo_codec_tag(s, track);
+        else if (track->enc->codec_id == AV_CODEC_ID_MPEG2VIDEO)
+            tag = mov_get_mpeg2_xdcam_codec_tag(s, track);
         else if (track->enc->codec_type == AVMEDIA_TYPE_VIDEO) {
             tag = ff_codec_get_tag(ff_codec_movvideo_tags, track->enc->codec_id);
             if (!tag) { // if no mac fcc found, try with Microsoft tags
@@ -989,6 +1051,7 @@ static const AVCodecTag codec_f4v_tags[] = { // XXX: add GIF/PNG/JPEG?
     { AV_CODEC_ID_MP3,    MKTAG('.','m','p','3') },
     { AV_CODEC_ID_AAC,    MKTAG('m','p','4','a') },
     { AV_CODEC_ID_H264,   MKTAG('a','v','c','1') },
+    { AV_CODEC_ID_VP6A,   MKTAG('V','P','6','A') },
     { AV_CODEC_ID_VP6F,   MKTAG('V','P','6','F') },
     { AV_CODEC_ID_NONE, 0 },
 };
@@ -1007,7 +1070,7 @@ static int mov_find_codec_tag(AVFormatContext *s, MOVTrack *track)
         tag = ipod_get_codec_tag(s, track);
     else if (track->mode & MODE_3GP)
         tag = ff_codec_get_tag(codec_3gp_tags, track->enc->codec_id);
-    else if (track->mode & MODE_F4V)
+    else if (track->mode == MODE_F4V)
         tag = ff_codec_get_tag(codec_f4v_tags, track->enc->codec_id);
     else
         tag = mov_get_codec_tag(s, track);
@@ -1076,6 +1139,32 @@ static int mov_write_pasp_tag(AVIOContext *pb, MOVTrack *track)
     return 16;
 }
 
+static void find_compressor(char * compressor_name, int len, MOVTrack *track)
+{
+    int xdcam_res =  (track->enc->width == 1280 && track->enc->height == 720)
+                  || (track->enc->width == 1440 && track->enc->height == 1080)
+                  || (track->enc->width == 1920 && track->enc->height == 1080);
+
+    if (track->mode == MODE_MOV && track->enc->codec && track->enc->codec->name) {
+        av_strlcpy(compressor_name, track->enc->codec->name, 32);
+    } else if (track->enc->codec_id == AV_CODEC_ID_MPEG2VIDEO && xdcam_res) {
+        int interlaced = track->enc->field_order > AV_FIELD_PROGRESSIVE;
+        AVStream *st = track->st;
+        int rate = av_q2d(find_fps(NULL, st));
+        av_strlcatf(compressor_name, len, "XDCAM");
+        if (track->enc->pix_fmt == AV_PIX_FMT_YUV422P) {
+            av_strlcatf(compressor_name, len, " HD422");
+        } else if(track->enc->width == 1440) {
+            av_strlcatf(compressor_name, len, " HD");
+        } else
+            av_strlcatf(compressor_name, len, " EX");
+
+        av_strlcatf(compressor_name, len, " %d%c", track->enc->height, interlaced ? 'i' : 'p');
+
+        av_strlcatf(compressor_name, len, "%d", rate * (interlaced + 1));
+    }
+}
+
 static int mov_write_video_tag(AVIOContext *pb, MOVTrack *track)
 {
     int64_t pos = avio_tell(pb);
@@ -1111,8 +1200,7 @@ static int mov_write_video_tag(AVIOContext *pb, MOVTrack *track)
     avio_wb16(pb, 1); /* Frame count (= 1) */
 
     /* FIXME not sure, ISO 14496-1 draft where it shall be set to 0 */
-    if (track->mode == MODE_MOV && track->enc->codec && track->enc->codec->name)
-        av_strlcpy(compressor_name, track->enc->codec->name, 32);
+    find_compressor(compressor_name, 32, track);
     avio_w8(pb, strlen(compressor_name));
     avio_write(pb, compressor_name, 31);
 
@@ -1137,7 +1225,11 @@ static int mov_write_video_tag(AVIOContext *pb, MOVTrack *track)
             mov_write_uuid_tag_ipod(pb);
     } else if (track->enc->codec_id == AV_CODEC_ID_VC1 && track->vos_len > 0)
         mov_write_dvc1_tag(pb, track);
-    else if (track->vos_len > 0)
+    else if (track->enc->codec_id == AV_CODEC_ID_VP6F ||
+             track->enc->codec_id == AV_CODEC_ID_VP6A) {
+        /* Don't write any potential extradata here - the cropping
+         * is signalled via the normal width/height fields. */
+    } else if (track->vos_len > 0)
         mov_write_glbl_tag(pb, track);
 
     if (track->enc->codec_id != AV_CODEC_ID_H264 &&
@@ -3420,10 +3512,8 @@ static int mov_create_chapter_track(AVFormatContext *s, int tracknum)
 #if 0
     // These properties are required to make QT recognize the chapter track
     uint8_t chapter_properties[43] = { 0, 0, 0, 0, 0, 0, 0, 1, };
-    track->enc->extradata = av_malloc(sizeof(chapter_properties));
-    if (track->enc->extradata == NULL)
+    if (ff_alloc_extradata(track->enc, sizeof(chapter_properties)))
         return AVERROR(ENOMEM);
-    track->enc->extradata_size = sizeof(chapter_properties);
     memcpy(track->enc->extradata, chapter_properties, sizeof(chapter_properties));
 #else
     if (avio_open_dyn_buf(&pb) >= 0) {
@@ -3738,6 +3828,7 @@ static int mov_write_header(AVFormatContext *s)
         AVDictionaryEntry *lang = av_dict_get(st->metadata, "language", NULL,0);
 
         track->enc = st->codec;
+        track->st = st;
         track->language = ff_mov_iso639_to_lang(lang?lang->value:"und", mov->mode!=MODE_MOV);
         if (track->language < 0)
             track->language = 0;
