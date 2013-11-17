@@ -399,6 +399,11 @@ int av_probe_input_buffer2(AVIOContext *pb, AVInputFormat **fmt,
                 av_log(logctx, AV_LOG_WARNING, "Format %s detected only with low score of %d, misdetection possible!\n", (*fmt)->name, score);
             }else
                 av_log(logctx, AV_LOG_DEBUG, "Format %s probed with size=%d and score=%d\n", (*fmt)->name, probe_size, score);
+#if 0
+            FILE *f = fopen("probestat.tmp", "ab");
+            fprintf(f, "probe_size:%d format:%s score:%d filename:%s\n", probe_size, (*fmt)->name, score, filename);
+            fclose(f);
+#endif
         }
     }
 
@@ -1039,7 +1044,8 @@ static void compute_pkt_fields(AVFormatContext *s, AVStream *st,
     if((s->flags & AVFMT_FLAG_IGNDTS) && pkt->pts != AV_NOPTS_VALUE)
         pkt->dts= AV_NOPTS_VALUE;
 
-    if (st->codec->codec_id != AV_CODEC_ID_H264 && pc && pc->pict_type == AV_PICTURE_TYPE_B)
+    if (pc && pc->pict_type == AV_PICTURE_TYPE_B
+        && !st->codec->has_b_frames)
         //FIXME Set low_delay = 0 when has_b_frames = 1
         st->codec->has_b_frames = 1;
 
@@ -2442,7 +2448,7 @@ static int try_decode_frame(AVFormatContext *s, AVStream *st, AVPacket *avpkt, A
 {
     const AVCodec *codec;
     int got_picture = 1, ret = 0;
-    AVFrame *frame = avcodec_alloc_frame();
+    AVFrame *frame = av_frame_alloc();
     AVSubtitle subtitle;
     AVPacket pkt = *avpkt;
 
@@ -4165,7 +4171,7 @@ int avformat_match_stream_specifier(AVFormatContext *s, AVStream *st,
     return AVERROR(EINVAL);
 }
 
-void ff_generate_avci_extradata(AVStream *st)
+int ff_generate_avci_extradata(AVStream *st)
 {
     static const uint8_t avci100_1080p_extradata[] = {
         // SPS
@@ -4232,8 +4238,10 @@ void ff_generate_avci_extradata(AVStream *st)
         0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x31, 0x12,
         0x11
     };
+
+    const uint8_t *data = NULL;
     int size = 0;
-    const uint8_t *data = 0;
+
     if (st->codec->width == 1920) {
         if (st->codec->field_order == AV_FIELD_PROGRESSIVE) {
             data = avci100_1080p_extradata;
@@ -4249,10 +4257,14 @@ void ff_generate_avci_extradata(AVStream *st)
         data = avci100_720p_extradata;
         size = sizeof(avci100_720p_extradata);
     }
+
     if (!size)
-        return;
+        return 0;
+
     av_freep(&st->codec->extradata);
     if (ff_alloc_extradata(st->codec, size))
-        return;
+        return AVERROR(ENOMEM);
     memcpy(st->codec->extradata, data, size);
+
+    return 0;
 }
