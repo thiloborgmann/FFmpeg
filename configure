@@ -2002,6 +2002,7 @@ wmv3_vdpau_hwaccel_select="vc1_vdpau_hwaccel"
 
 # parsers
 h264_parser_select="golomb h264chroma h264dsp h264pred h264qpel videodsp"
+hevc_parser_select="hevc_decoder"
 mpeg4video_parser_select="error_resilience mpegvideo"
 mpegvideo_parser_select="error_resilience mpegvideo"
 vc1_parser_select="mpegvideo"
@@ -4760,7 +4761,7 @@ echo "License: $license"
 
 echo "Creating config.mak, config.h, and doc/config.texi..."
 
-test -e Makefile || $ln_s "$source_path/Makefile" .
+test -e Makefile || echo "include $source_path/Makefile" > Makefile
 
 enabled stripping || strip="echo skipping strip"
 
