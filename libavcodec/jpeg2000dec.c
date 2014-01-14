@@ -540,6 +540,8 @@ static int get_qcd(Jpeg2000DecoderContext *s, int n, Jpeg2000QuantStyle *q,
     Jpeg2000QuantStyle tmp;
     int compno, ret;
 
+    memset(&tmp, 0, sizeof(tmp));
+
     if ((ret = get_qcx(s, n, &tmp)) < 0)
         return ret;
     for (compno = 0; compno < s->ncomponents; compno++)
@@ -889,6 +891,10 @@ static int jpeg2000_decode_packets(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile
                         prcx   = ff_jpeg2000_ceildivpow2(x, reducedresno) >> rlevel->log2_prec_width;
                         prcy   = ff_jpeg2000_ceildivpow2(y, reducedresno) >> rlevel->log2_prec_height;
                         precno = prcx + rlevel->num_precincts_x * prcy;
+
+                        if (prcx >= rlevel->num_precincts_x || prcy >= rlevel->num_precincts_y)
+                            return AVERROR_PATCHWELCOME;
+
                         for (layno = 0; layno < tile->codsty[0].nlayers; layno++) {
                             if ((ret = jpeg2000_decode_packet(s, codsty, rlevel,
                                                               precno, layno,

@@ -72,6 +72,8 @@
 #define EPEL_EXTRA_AFTER  2
 #define EPEL_EXTRA        3
 
+#define EDGE_EMU_BUFFER_STRIDE 80
+
 /**
  * Value of the luma sample at position (x, y) in the 2D array tab.
  */
@@ -330,21 +332,24 @@ typedef struct VUI {
     int log2_max_mv_length_vertical;
 } VUI;
 
+typedef struct PTLCommon {
+    uint8_t profile_space;
+    uint8_t tier_flag;
+    uint8_t profile_idc;
+    uint8_t profile_compatibility_flag[32];
+    uint8_t level_idc;
+    uint8_t progressive_source_flag;
+    uint8_t interlaced_source_flag;
+    uint8_t non_packed_constraint_flag;
+    uint8_t frame_only_constraint_flag;
+} PTLCommon;
+
 typedef struct PTL {
-    int general_profile_space;
-    uint8_t general_tier_flag;
-    int general_profile_idc;
-    int general_profile_compatibility_flag[32];
-    int general_level_idc;
+    PTLCommon general_ptl;
+    PTLCommon sub_layer_ptl[MAX_SUB_LAYERS];
 
     uint8_t sub_layer_profile_present_flag[MAX_SUB_LAYERS];
     uint8_t sub_layer_level_present_flag[MAX_SUB_LAYERS];
-
-    int sub_layer_profile_space[MAX_SUB_LAYERS];
-    uint8_t sub_layer_tier_flag[MAX_SUB_LAYERS];
-    int sub_layer_profile_idc[MAX_SUB_LAYERS];
-    uint8_t sub_layer_profile_compatibility_flags[MAX_SUB_LAYERS][32];
-    int sub_layer_level_idc[MAX_SUB_LAYERS];
 } PTL;
 
 typedef struct HEVCVPS {
@@ -497,16 +502,13 @@ typedef struct HEVCPPS {
     int beta_offset;    ///< beta_offset_div2 * 2
     int tc_offset;      ///< tc_offset_div2 * 2
 
-    int scaling_list_data_present_flag;
+    uint8_t scaling_list_data_present_flag;
     ScalingList scaling_list;
 
     uint8_t lists_modification_present_flag;
     int log2_parallel_merge_level; ///< log2_parallel_merge_level_minus2 + 2
     int num_extra_slice_header_bits;
     uint8_t slice_header_extension_present_flag;
-
-    uint8_t pps_extension_flag;
-    uint8_t pps_extension_data_flag;
 
     // Inferred parameters
     int *column_width;  ///< ColumnWidth
@@ -569,8 +571,7 @@ typedef struct SliceHeader {
     int beta_offset;    ///< beta_offset_div2 * 2
     int tc_offset;      ///< tc_offset_div2 * 2
 
-    int max_num_merge_cand; ///< 5 - 5_minus_max_num_merge_cand
-
+    unsigned int max_num_merge_cand; ///< 5 - 5_minus_max_num_merge_cand
 
     int *entry_point_offset;
     int * offset;
@@ -664,19 +665,6 @@ typedef struct TransformUnit {
     uint8_t is_cu_qp_delta_coded;
 } TransformUnit;
 
-typedef struct SAOParams {
-    int offset_abs[3][4];   ///< sao_offset_abs
-    int offset_sign[3][4];  ///< sao_offset_sign
-
-    int band_position[3];   ///< sao_band_position
-
-    int eo_class[3];        ///< sao_eo_class
-
-    int offset_val[3][5];   ///<SaoOffsetVal
-
-    uint8_t type_idx[3];    ///< sao_type_idx
-} SAOParams;
-
 typedef struct DBParams {
     int beta_offset;
     int tc_offset;
@@ -744,8 +732,8 @@ typedef struct HEVCLocalContext {
     int     start_of_tiles_x;
     int     end_of_tiles_x;
     int     end_of_tiles_y;
-    uint8_t *edge_emu_buffer;
-    int      edge_emu_buffer_size;
+    /* +7 is for subpixel interpolation, *2 for high bit depths */
+    DECLARE_ALIGNED(32, uint8_t, edge_emu_buffer)[(MAX_PB_SIZE + 7) * EDGE_EMU_BUFFER_STRIDE * 2];
     CodingTree ct;
     CodingUnit cu;
     PredictionUnit pu;
@@ -759,10 +747,10 @@ typedef struct HEVCContext {
     const AVClass *c;  // needed by private avoptions
     AVCodecContext *avctx;
 
-    struct HEVCContext *sList[MAX_NB_THREADS];
+    struct HEVCContext  *sList[MAX_NB_THREADS];
 
-    HEVCLocalContext *HEVClcList[MAX_NB_THREADS];
-    HEVCLocalContext *HEVClc;
+    HEVCLocalContext    *HEVClcList[MAX_NB_THREADS];
+    HEVCLocalContext    *HEVClc;
 
     uint8_t             threads_type;
     uint8_t             threads_number;
@@ -780,10 +768,10 @@ typedef struct HEVCContext {
     AVFrame *tmp_frame;
     AVFrame *output_frame;
 
-    HEVCVPS *vps;
+    const HEVCVPS *vps;
     const HEVCSPS *sps;
-    HEVCPPS *pps;
-    HEVCVPS     *vps_list[MAX_VPS_COUNT];
+    const HEVCPPS *pps;
+    AVBufferRef *vps_list[MAX_VPS_COUNT];
     AVBufferRef *sps_list[MAX_SPS_COUNT];
     AVBufferRef *pps_list[MAX_PPS_COUNT];
 
@@ -865,8 +853,8 @@ typedef struct HEVCContext {
     uint8_t       md5[3][16];
     uint8_t is_md5;
 
-    int context_initialized;
-    int is_nalff;           ///< this flag is != 0 if bitstream is encapsulated
+    uint8_t context_initialized;
+    uint8_t is_nalff;       ///< this flag is != 0 if bitstream is encapsulated
                             ///< as a format defined in 14496-15
     int apply_defdispwin;
 
@@ -874,6 +862,12 @@ typedef struct HEVCContext {
 
     int nal_length_size;    ///< Number of bytes used for nal length (1, 2 or 4)
     int nuh_layer_id;
+
+    /** frame packing arrangement variables */
+    int sei_frame_packing_present;
+    int frame_packing_arrangement_type;
+    int content_interpretation_type;
+    int quincunx_subsampling;
 
     int picture_struct;
 } HEVCContext;
@@ -982,14 +976,12 @@ int ff_hevc_cu_qp_delta_sign_flag(HEVCContext *s);
 int ff_hevc_cu_qp_delta_abs(HEVCContext *s);
 void ff_hevc_hls_filter(HEVCContext *s, int x, int y);
 void ff_hevc_hls_filters(HEVCContext *s, int x_ctb, int y_ctb, int ctb_size);
-
 void ff_hevc_hls_residual_coding(HEVCContext *s, int x0, int y0,
                                  int log2_trafo_size, enum ScanType scan_idx,
                                  int c_idx);
 
 void ff_hevc_hls_mvd_coding(HEVCContext *s, int x0, int y0, int log2_cb_size);
 
-void ff_hevc_pps_free(HEVCPPS **ppps);
 
 extern const uint8_t ff_hevc_qpel_extra_before[4];
 extern const uint8_t ff_hevc_qpel_extra_after[4];

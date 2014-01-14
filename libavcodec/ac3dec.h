@@ -79,14 +79,17 @@ typedef struct AC3DecodeContext {
     int bit_rate;                           ///< stream bit rate, in bits-per-second
     int sample_rate;                        ///< sample frequency, in Hz
     int num_blocks;                         ///< number of audio blocks
+    int bitstream_id;                       ///< bitstream id                           (bsid)
     int bitstream_mode;                     ///< bitstream mode                         (bsmod)
     int channel_mode;                       ///< channel mode                           (acmod)
-    int channel_layout;                     ///< channel layout
     int lfe_on;                             ///< lfe channel in use
     int channel_map;                        ///< custom channel map
     int center_mix_level;                   ///< Center mix level index
     int surround_mix_level;                 ///< Surround mix level index
     int eac3;                               ///< indicates if current frame is E-AC-3
+    int dolby_surround_mode;                ///< dolby surround mode                    (dsurmod)
+    int dolby_surround_ex_mode;             ///< dolby surround ex mode                 (dsurexmod)
+    int dolby_headphone_mode;               ///< dolby headphone mode                   (dheadphonmod)
 ///@}
 
     int preferred_stereo_downmix;

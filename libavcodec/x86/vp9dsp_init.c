@@ -20,6 +20,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/cpu.h"
 #include "libavutil/mem.h"
 #include "libavutil/x86/asm.h"
@@ -56,6 +57,9 @@ mc_func(avg, sz, v, ssse3)
 
 mc_funcs(4);
 mc_funcs(8);
+#if ARCH_X86_64
+mc_funcs(16);
+#endif
 
 #undef mc_funcs
 #undef mc_func
@@ -78,7 +82,9 @@ mc_rep_func(avg, sz, hsz, h, ssse3); \
 mc_rep_func(put, sz, hsz, v, ssse3); \
 mc_rep_func(avg, sz, hsz, v, ssse3)
 
+#if ARCH_X86_32
 mc_rep_funcs(16, 8);
+#endif
 mc_rep_funcs(32, 16);
 mc_rep_funcs(64, 32);
 
@@ -153,6 +159,11 @@ filters_8tap_1d_fn3(avg)
 
 void ff_vp9_idct_idct_4x4_add_ssse3(uint8_t *dst, ptrdiff_t stride, int16_t *block, int eob);
 void ff_vp9_idct_idct_8x8_add_ssse3(uint8_t *dst, ptrdiff_t stride, int16_t *block, int eob);
+void ff_vp9_idct_idct_16x16_add_ssse3(uint8_t *dst, ptrdiff_t stride, int16_t *block, int eob);
+void ff_vp9_idct_idct_32x32_add_ssse3(uint8_t *dst, ptrdiff_t stride, int16_t *block, int eob);
+
+void ff_vp9_loop_filter_v_16_16_ssse3(uint8_t *dst, ptrdiff_t stride, int E, int I, int H);
+void ff_vp9_loop_filter_h_16_16_ssse3(uint8_t *dst, ptrdiff_t stride, int E, int I, int H);
 
 #endif /* HAVE_YASM */
 
@@ -208,8 +219,16 @@ av_cold void ff_vp9dsp_init_x86(VP9DSPContext *dsp)
         init_subpel3(0, put, ssse3);
         init_subpel3(1, avg, ssse3);
         dsp->itxfm_add[TX_4X4][DCT_DCT] = ff_vp9_idct_idct_4x4_add_ssse3;
-        if (ARCH_X86_64)
+        if (ARCH_X86_64) {
             dsp->itxfm_add[TX_8X8][DCT_DCT] = ff_vp9_idct_idct_8x8_add_ssse3;
+            dsp->itxfm_add[TX_16X16][DCT_DCT] = ff_vp9_idct_idct_16x16_add_ssse3;
+            dsp->itxfm_add[TX_32X32][ADST_ADST] =
+            dsp->itxfm_add[TX_32X32][ADST_DCT] =
+            dsp->itxfm_add[TX_32X32][DCT_ADST] =
+            dsp->itxfm_add[TX_32X32][DCT_DCT] = ff_vp9_idct_idct_32x32_add_ssse3;
+            dsp->loop_filter_16[0] = ff_vp9_loop_filter_h_16_16_ssse3;
+            dsp->loop_filter_16[1] = ff_vp9_loop_filter_v_16_16_ssse3;
+        }
     }
 
 #undef init_fpel

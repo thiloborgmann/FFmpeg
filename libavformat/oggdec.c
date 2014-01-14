@@ -48,6 +48,7 @@ static const struct ogg_codec * const ogg_codecs[] = {
     &ff_flac_codec,
     &ff_celt_codec,
     &ff_opus_codec,
+    &ff_vp8_codec,
     &ff_old_dirac_codec,
     &ff_old_flac_codec,
     &ff_ogm_video_codec,
@@ -142,6 +143,7 @@ static int ogg_reset(AVFormatContext *s)
         if (start_pos <= s->data_offset) {
             os->lastpts = 0;
         }
+        os->end_trimming = 0;
     }
 
     ogg->page_pos = -1;
@@ -784,6 +786,7 @@ retry:
             return AVERROR(ENOMEM);
         }
         AV_WL32(side_data + 4, os->end_trimming);
+        os->end_trimming = 0;
     }
 
     return psize;
@@ -805,6 +808,11 @@ static int64_t ogg_read_timestamp(AVFormatContext *s, int stream_index,
            && !ogg_packet(s, &i, &pstart, &psize, pos_arg)) {
         if (i == stream_index) {
             struct ogg_stream *os = ogg->streams + stream_index;
+            // Dont trust the last timestamps of a ogm video
+            if (    (os->flags & OGG_FLAG_EOS)
+                && !(os->flags & OGG_FLAG_BOS)
+                && os->codec == &ff_ogm_video_codec)
+                continue;
             pts = ogg_calc_pts(s, i, NULL);
             ogg_validate_keyframe(s, i, pstart, psize);
             if (os->pflags & AV_PKT_FLAG_KEY) {

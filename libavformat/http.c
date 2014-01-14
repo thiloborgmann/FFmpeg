@@ -52,10 +52,10 @@ typedef struct {
     int64_t chunksize;      /**< Used if "Transfer-Encoding: chunked" otherwise -1. */
     char *content_type;
     char *user_agent;
-    int64_t off, filesize;
+    int64_t off, filesize, req_end_offset;
     int icy_data_read;      ///< how much data was read since last ICY metadata packet
     int icy_metaint;        ///< after how many bytes of read data a new metadata packet will be found
-    char location[MAX_URL_SIZE];
+    char *location;
     HTTPAuthState auth_state;
     HTTPAuthState proxy_auth_state;
     char *headers;
@@ -103,7 +103,10 @@ static const AVOption options[] = {
 {"auth_type", "HTTP authentication type", OFFSET(auth_state.auth_type), AV_OPT_TYPE_INT, {.i64 = HTTP_AUTH_NONE}, HTTP_AUTH_NONE, HTTP_AUTH_BASIC, D|E, "auth_type" },
 {"none", "No auth method set, autodetect", 0, AV_OPT_TYPE_CONST, {.i64 = HTTP_AUTH_NONE}, 0, 0, D|E, "auth_type" },
 {"basic", "HTTP basic authentication", 0, AV_OPT_TYPE_CONST, {.i64 = HTTP_AUTH_BASIC}, 0, 0, D|E, "auth_type" },
-{"send_expect_100", "Force sending an Expect: 100-continue header for POST", OFFSET(send_expect_100), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 1, E, "auth_type" },
+{"send_expect_100", "Force sending an Expect: 100-continue header for POST", OFFSET(send_expect_100), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 1, E },
+{"location", "The actual location of the data received", OFFSET(location), AV_OPT_TYPE_STRING, { 0 }, 0, 0, D|E },
+{"offset", "initial byte offset", OFFSET(off), AV_OPT_TYPE_INT64, {.i64 = 0}, 0, INT64_MAX, D },
+{"end_offset", "try to limit the request to bytes preceding this offset", OFFSET(req_end_offset), AV_OPT_TYPE_INT64, {.i64 = 0}, 0, INT64_MAX, D },
 {NULL}
 };
 #define HTTP_CLASS(flavor)\
@@ -236,7 +239,10 @@ int ff_http_do_new_request(URLContext *h, const char *uri)
 
     s->off = 0;
     s->icy_data_read = 0;
-    av_strlcpy(s->location, uri, sizeof(s->location));
+    av_free(s->location);
+    s->location = av_strdup(uri);
+    if (!s->location)
+        return AVERROR(ENOMEM);
 
     av_dict_copy(&options, s->chained_options, 0);
     ret = http_open_cnx(h, &options);
@@ -256,7 +262,9 @@ static int http_open(URLContext *h, const char *uri, int flags,
         h->is_streamed = 1;
 
     s->filesize = -1;
-    av_strlcpy(s->location, uri, sizeof(s->location));
+    s->location = av_strdup(uri);
+    if (!s->location)
+        return AVERROR(ENOMEM);
     if (options)
         av_dict_copy(&s->chained_options, *options, 0);
 
@@ -317,7 +325,6 @@ static int process_line(URLContext *h, char *line, int line_count,
 {
     HTTPContext *s = h->priv_data;
     char *tag, *p, *end;
-    char redirected_location[MAX_URL_SIZE];
 
     /* end of header */
     if (line[0] == '\0') {
@@ -357,8 +364,14 @@ static int process_line(URLContext *h, char *line, int line_count,
         while (av_isspace(*p))
             p++;
         if (!av_strcasecmp(tag, "Location")) {
-            ff_make_absolute_url(redirected_location, sizeof(redirected_location), s->location, p);
-            av_strlcpy(s->location, redirected_location, sizeof(s->location));
+            char redirected_location[MAX_URL_SIZE], *new_loc;
+            ff_make_absolute_url(redirected_location, sizeof(redirected_location),
+                                 s->location, p);
+            new_loc = av_strdup(redirected_location);
+            if (!new_loc)
+                return AVERROR(ENOMEM);
+            av_free(s->location);
+            s->location = new_loc;
             *new_location = 1;
         } else if (!av_strcasecmp (tag, "Content-Length") && s->filesize == -1) {
             s->filesize = strtoll(p, NULL, 10);
@@ -632,9 +645,15 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
     // Note: we send this on purpose even when s->off is 0 when we're probing,
     // since it allows us to detect more reliably if a (non-conforming)
     // server supports seeking by analysing the reply headers.
-    if (!has_header(s->headers, "\r\nRange: ") && !post && (s->off > 0 || s->seekable == -1))
+    if (!has_header(s->headers, "\r\nRange: ") && !post && (s->off > 0 || s->req_end_offset || s->seekable == -1)) {
         len += av_strlcatf(headers + len, sizeof(headers) - len,
-                           "Range: bytes=%"PRId64"-\r\n", s->off);
+                           "Range: bytes=%"PRId64"-", s->off);
+        if (s->req_end_offset)
+            len += av_strlcatf(headers + len, sizeof(headers) - len,
+                               "%"PRId64, s->req_end_offset - 1);
+        len += av_strlcpy(headers + len, "\r\n",
+                          sizeof(headers) - len);
+    }
     if (send_expect_100 && !has_header(s->headers, "\r\nExpect: "))
         len += av_strlcatf(headers + len, sizeof(headers) - len,
                            "Expect: 100-continue\r\n");
@@ -928,6 +947,8 @@ static int64_t http_seek(URLContext *h, int64_t off, int whence)
 
     if (whence == AVSEEK_SIZE)
         return s->filesize;
+    else if ((whence == SEEK_CUR && off == 0) || (whence == SEEK_SET && off == s->off))
+        return s->off;
     else if ((s->filesize == -1 && whence == SEEK_END) || h->is_streamed)
         return -1;
 

@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include <stdint.h>
+
 #include "avc.h"
 #include "avformat.h"
 #include "avio_internal.h"
@@ -549,6 +551,10 @@ static int mkv_write_codecprivate(AVFormatContext *s, AVIOContext *pb, AVCodecCo
             if (codec->extradata_size)
                 avio_write(dyn_cp, codec->extradata, codec->extradata_size);
         } else {
+            if (!ff_codec_get_tag(ff_codec_bmp_tags, codec->codec_id))
+                av_log(s, AV_LOG_WARNING, "codec %s is not supported by this format\n",
+                       avcodec_get_name(codec->codec_id));
+
             if (!codec->codec_tag)
                 codec->codec_tag = ff_codec_get_tag(ff_codec_bmp_tags, codec->codec_id);
             if (!codec->codec_tag) {
@@ -557,7 +563,7 @@ static int mkv_write_codecprivate(AVFormatContext *s, AVIOContext *pb, AVCodecCo
                 ret = AVERROR(EINVAL);
             }
 
-            ff_put_bmp_header(dyn_cp, codec, ff_codec_bmp_tags, 0);
+            ff_put_bmp_header(dyn_cp, codec, ff_codec_bmp_tags, 0, 0);
         }
 
     } else if (codec->codec_type == AVMEDIA_TYPE_AUDIO) {

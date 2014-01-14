@@ -73,7 +73,8 @@ static AVStream *add_stream(AVFormatContext *oc, AVCodec **codec,
 
     switch ((*codec)->type) {
     case AVMEDIA_TYPE_AUDIO:
-        c->sample_fmt  = AV_SAMPLE_FMT_FLTP;
+        c->sample_fmt  = (*codec)->sample_fmts ?
+            (*codec)->sample_fmts[0] : AV_SAMPLE_FMT_FLTP;
         c->bit_rate    = 64000;
         c->sample_rate = 44100;
         c->channels    = 2;
@@ -122,6 +123,7 @@ static AVStream *add_stream(AVFormatContext *oc, AVCodec **codec,
 
 static float t, tincr, tincr2;
 
+AVFrame *audio_frame;
 static uint8_t **src_samples_data;
 static int       src_samples_linesize;
 static int       src_nb_samples;
@@ -130,6 +132,7 @@ static int max_dst_nb_samples;
 uint8_t **dst_samples_data;
 int       dst_samples_linesize;
 int       dst_samples_size;
+int samples_count;
 
 struct SwrContext *swr_ctx = NULL;
 
@@ -139,6 +142,13 @@ static void open_audio(AVFormatContext *oc, AVCodec *codec, AVStream *st)
     int ret;
 
     c = st->codec;
+
+    /* allocate and init a re-usable frame */
+    audio_frame = av_frame_alloc();
+    if (!audio_frame) {
+        fprintf(stderr, "Could not allocate audio frame\n");
+        exit(1);
+    }
 
     /* open it */
     ret = avcodec_open2(c, codec, NULL);
@@ -157,11 +167,16 @@ static void open_audio(AVFormatContext *oc, AVCodec *codec, AVStream *st)
         10000 : c->frame_size;
 
     ret = av_samples_alloc_array_and_samples(&src_samples_data, &src_samples_linesize, c->channels,
-                                             src_nb_samples, c->sample_fmt, 0);
+                                             src_nb_samples, AV_SAMPLE_FMT_S16, 0);
     if (ret < 0) {
         fprintf(stderr, "Could not allocate source samples\n");
         exit(1);
     }
+
+    /* compute the number of converted samples: buffering is avoided
+     * ensuring that the output buffer will contain at least all the
+     * converted input samples */
+    max_dst_nb_samples = src_nb_samples;
 
     /* create resampler context */
     if (c->sample_fmt != AV_SAMPLE_FMT_S16) {
@@ -184,17 +199,15 @@ static void open_audio(AVFormatContext *oc, AVCodec *codec, AVStream *st)
             fprintf(stderr, "Failed to initialize the resampling context\n");
             exit(1);
         }
-    }
 
-    /* compute the number of converted samples: buffering is avoided
-     * ensuring that the output buffer will contain at least all the
-     * converted input samples */
-    max_dst_nb_samples = src_nb_samples;
-    ret = av_samples_alloc_array_and_samples(&dst_samples_data, &dst_samples_linesize, c->channels,
-                                             max_dst_nb_samples, c->sample_fmt, 0);
-    if (ret < 0) {
-        fprintf(stderr, "Could not allocate destination samples\n");
-        exit(1);
+        ret = av_samples_alloc_array_and_samples(&dst_samples_data, &dst_samples_linesize, c->channels,
+                                                 max_dst_nb_samples, c->sample_fmt, 0);
+        if (ret < 0) {
+            fprintf(stderr, "Could not allocate destination samples\n");
+            exit(1);
+        }
+    } else {
+        dst_samples_data = src_samples_data;
     }
     dst_samples_size = av_samples_get_buffer_size(NULL, c->channels, max_dst_nb_samples,
                                                   c->sample_fmt, 0);
@@ -221,7 +234,6 @@ static void write_audio_frame(AVFormatContext *oc, AVStream *st)
 {
     AVCodecContext *c;
     AVPacket pkt = { 0 }; // data and size must be 0;
-    AVFrame *frame = av_frame_alloc();
     int got_packet, ret, dst_nb_samples;
 
     av_init_packet(&pkt);
@@ -254,15 +266,16 @@ static void write_audio_frame(AVFormatContext *oc, AVStream *st)
             exit(1);
         }
     } else {
-        dst_samples_data[0] = src_samples_data[0];
         dst_nb_samples = src_nb_samples;
     }
 
-    frame->nb_samples = dst_nb_samples;
-    avcodec_fill_audio_frame(frame, c->channels, c->sample_fmt,
+    audio_frame->nb_samples = dst_nb_samples;
+    audio_frame->pts = av_rescale_q(samples_count, (AVRational){1, c->sample_rate}, c->time_base);
+    avcodec_fill_audio_frame(audio_frame, c->channels, c->sample_fmt,
                              dst_samples_data[0], dst_samples_size, 0);
+    samples_count += dst_nb_samples;
 
-    ret = avcodec_encode_audio2(c, &pkt, frame, &got_packet);
+    ret = avcodec_encode_audio2(c, &pkt, audio_frame, &got_packet);
     if (ret < 0) {
         fprintf(stderr, "Error encoding audio frame: %s\n", av_err2str(ret));
         exit(1);
@@ -271,6 +284,10 @@ static void write_audio_frame(AVFormatContext *oc, AVStream *st)
     if (!got_packet)
         return;
 
+    /* rescale output packet timestamp values from codec to stream timebase */
+    pkt.pts = av_rescale_q_rnd(pkt.pts, c->time_base, st->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    pkt.dts = av_rescale_q_rnd(pkt.dts, c->time_base, st->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    pkt.duration = av_rescale_q(pkt.duration, c->time_base, st->time_base);
     pkt.stream_index = st->index;
 
     /* Write the compressed frame to the media file. */
@@ -280,14 +297,18 @@ static void write_audio_frame(AVFormatContext *oc, AVStream *st)
                 av_err2str(ret));
         exit(1);
     }
-    avcodec_free_frame(&frame);
 }
 
 static void close_audio(AVFormatContext *oc, AVStream *st)
 {
     avcodec_close(st->codec);
+    if (dst_samples_data != src_samples_data) {
+        av_free(dst_samples_data[0]);
+        av_free(dst_samples_data);
+    }
     av_free(src_samples_data[0]);
-    av_free(dst_samples_data[0]);
+    av_free(src_samples_data);
+    av_frame_free(&audio_frame);
 }
 
 /**************************************************************/
@@ -315,6 +336,9 @@ static void open_video(AVFormatContext *oc, AVCodec *codec, AVStream *st)
         fprintf(stderr, "Could not allocate video frame\n");
         exit(1);
     }
+    frame->format = c->pix_fmt;
+    frame->width = c->width;
+    frame->height = c->height;
 
     /* Allocate the encoded raw picture. */
     ret = avpicture_alloc(&dst_picture, c->pix_fmt, c->width, c->height);
@@ -411,6 +435,7 @@ static void write_video_frame(AVFormatContext *oc, AVStream *st)
         av_init_packet(&pkt);
 
         /* encode the image */
+        frame->pts = frame_count;
         ret = avcodec_encode_video2(c, &pkt, frame, &got_packet);
         if (ret < 0) {
             fprintf(stderr, "Error encoding video frame: %s\n", av_err2str(ret));
@@ -419,6 +444,10 @@ static void write_video_frame(AVFormatContext *oc, AVStream *st)
         /* If size is zero, it means the image was buffered. */
 
         if (!ret && got_packet && pkt.size) {
+            /* rescale output packet timestamp values from codec to stream timebase */
+            pkt.pts = av_rescale_q_rnd(pkt.pts, c->time_base, st->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+            pkt.dts = av_rescale_q_rnd(pkt.dts, c->time_base, st->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+            pkt.duration = av_rescale_q(pkt.duration, c->time_base, st->time_base);
             pkt.stream_index = st->index;
 
             /* Write the compressed frame to the media file. */
@@ -439,7 +468,7 @@ static void close_video(AVFormatContext *oc, AVStream *st)
     avcodec_close(st->codec);
     av_free(src_picture.data[0]);
     av_free(dst_picture.data[0]);
-    av_free(frame);
+    av_frame_free(&frame);
 }
 
 /**************************************************************/
@@ -521,8 +550,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (frame)
-        frame->pts = 0;
     for (;;) {
         /* Compute current audio and video time. */
         audio_time = audio_st ? audio_st->pts.val * av_q2d(audio_st->time_base) : 0.0;
@@ -537,7 +564,6 @@ int main(int argc, char **argv)
             write_audio_frame(oc, audio_st);
         } else {
             write_video_frame(oc, video_st);
-            frame->pts += av_rescale_q(1, video_st->codec->time_base, video_st->time_base);
         }
     }
 

@@ -37,14 +37,15 @@
 #include "libavutil/dict.h"
 #include "libavutil/frame.h"
 #include "libavutil/log.h"
-#if FF_API_FAST_MALLOC
-// to provide fast_*alloc
-#include "libavutil/mem.h"
-#endif
 #include "libavutil/pixfmt.h"
 #include "libavutil/rational.h"
 
 #include "version.h"
+
+#if FF_API_FAST_MALLOC
+// to provide fast_*alloc
+#include "libavutil/mem.h"
+#endif
 
 /**
  * @defgroup libavc Encoding/Decoding Library
@@ -512,6 +513,7 @@ enum AVCodecID {
     AV_CODEC_ID_OTF        = MKBETAG( 0 ,'O','T','F'),
     AV_CODEC_ID_SMPTE_KLV  = MKBETAG('K','L','V','A'),
     AV_CODEC_ID_DVD_NAV    = MKBETAG('D','N','A','V'),
+    AV_CODEC_ID_TIMED_ID3  = MKBETAG('T','I','D','3'),
 
 
     AV_CODEC_ID_PROBE = 0x19000, ///< codec_id is not known (like AV_CODEC_ID_NONE) but lavf should attempt to identify it
@@ -766,7 +768,13 @@ typedef struct RcOverride{
 #define CODEC_CAP_DR1             0x0002
 #define CODEC_CAP_TRUNCATED       0x0008
 #if FF_API_XVMC
-/* Codec can export data for HW decoding (XvMC). */
+/* Codec can export data for HW decoding. This flag indicates that
+ * the codec would call get_format() with list that might contain HW accelerated
+ * pixel formats (XvMC, VDPAU, VAAPI, etc). The application can pick any of them
+ * including raw image format.
+ * The application can use the passed context to determine bitstream version,
+ * chroma format, resolution etc.
+ */
 #define CODEC_CAP_HWACCEL         0x0010
 #endif /* FF_API_XVMC */
 /**
@@ -1043,6 +1051,13 @@ enum AVPacketSideDataType {
      * follow the timestamp specifier of a WebVTT cue.
      */
     AV_PKT_DATA_WEBVTT_SETTINGS,
+
+    /**
+     * A list of zero terminated key/value strings. There is no end marker for
+     * the list, so it is required to rely on the side data size to stop. This
+     * side data includes updated metadata which appeared in the stream.
+     */
+    AV_PKT_DATA_METADATA_UPDATE,
 };
 
 /**
@@ -1687,7 +1702,7 @@ typedef struct AVCodecContext {
      * XVideo Motion Acceleration
      * - encoding: forbidden
      * - decoding: set by decoder
-     * @deprecated XvMC support is slated for removal.
+     * @deprecated XvMC doesn't need it anymore.
      */
     attribute_deprecated int xvmc_acceleration;
 #endif /* FF_API_XVMC */
@@ -2142,6 +2157,8 @@ typedef struct AVCodecContext {
      *
      * avcodec_align_dimensions2() should be used to find the required width and
      * height, as they normally need to be rounded up to the next multiple of 16.
+     *
+     * Some decoders do not support linesizes changing between frames.
      *
      * If frame multithreading is used and thread_safe_callbacks is set,
      * this callback may be called from a different thread, but not from more
@@ -2806,6 +2823,11 @@ typedef struct AVCodecContext {
 #define FF_PROFILE_JPEG2000_DCINEMA_2K              3
 #define FF_PROFILE_JPEG2000_DCINEMA_4K              4
 
+
+#define FF_PROFILE_HEVC_MAIN                        1
+#define FF_PROFILE_HEVC_MAIN_10                     2
+#define FF_PROFILE_HEVC_MAIN_STILL_PICTURE          3
+
     /**
      * level
      * - encoding: Set by user.
@@ -3087,6 +3109,8 @@ typedef struct AVCodec {
 
 int av_codec_get_max_lowres(const AVCodec *codec);
 
+struct MpegEncContext;
+
 /**
  * AVHWAccel.
  */
@@ -3148,6 +3172,7 @@ typedef struct AVHWAccel {
      *
      * Meaningful slice information (codec specific) is guaranteed to
      * be parsed at this point. This function is mandatory.
+     * The only exception is XvMC, that works on MB level.
      *
      * @param avctx the codec context
      * @param buf the slice data buffer base
@@ -3175,6 +3200,17 @@ typedef struct AVHWAccel {
      * AVCodecContext.release_buffer().
      */
     int priv_data_size;
+
+    /**
+     * Called for every Macroblock in a slice.
+     *
+     * XvMC uses it to replace the ff_MPV_decode_mb().
+     * Instead of decoding to raw picture, MB parameters are
+     * stored in an array provided by the video driver.
+     *
+     * @param s the mpeg context
+     */
+    void (*decode_mb)(struct MpegEncContext *s);
 } AVHWAccel;
 
 /**
@@ -3369,13 +3405,15 @@ int avcodec_copy_context(AVCodecContext *dest, const AVCodecContext *src);
  */
 attribute_deprecated
 AVFrame *avcodec_alloc_frame(void);
-#endif
 
 /**
  * Set the fields of the given AVFrame to default values.
  *
  * @param frame The AVFrame of which the fields should be set to default values.
+ *
+ * @deprecated use av_frame_unref()
  */
+attribute_deprecated
 void avcodec_get_frame_defaults(AVFrame *frame);
 
 /**
@@ -3387,8 +3425,12 @@ void avcodec_get_frame_defaults(AVFrame *frame);
  * @warning this function does NOT free the data buffers themselves
  * (it does not know how, since they might have been allocated with
  *  a custom get_buffer()).
+ *
+ * @deprecated use av_frame_free()
  */
+attribute_deprecated
 void avcodec_free_frame(AVFrame **frame);
+#endif
 
 /**
  * Initialize the AVCodecContext to use the given AVCodec. Prior to using this
@@ -3578,6 +3620,24 @@ uint8_t* av_packet_get_side_data(AVPacket *pkt, enum AVPacketSideDataType type,
 int av_packet_merge_side_data(AVPacket *pkt);
 
 int av_packet_split_side_data(AVPacket *pkt);
+
+/**
+ * Pack a dictionary for use in side_data.
+ *
+ * @param dict The dictionary to pack.
+ * @param size pointer to store the size of the returned data
+ * @return pointer to data if successful, NULL otherwise
+ */
+uint8_t *av_packet_pack_dictionary(AVDictionary *dict, int *size);
+/**
+ * Unpack a dictionary from side_data.
+ *
+ * @param data data from side_data
+ * @param size size of the data
+ * @param dict the metadata storage dictionary
+ * @return 0 on success, < 0 on failure
+ */
+int av_packet_unpack_dictionary(const uint8_t *data, int size, AVDictionary **dict);
 
 
 /**

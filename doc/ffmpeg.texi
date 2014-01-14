@@ -508,9 +508,6 @@ prefix is ``ffmpeg2pass''. The complete file name will be
 @file{PREFIX-N.log}, where N is a number specific to the output
 stream
 
-@item -vlang @var{code}
-Set the ISO 639 language code (3 letters) of the current video stream.
-
 @item -vf @var{filtergraph} (@emph{output})
 Create the filtergraph specified by @var{filtergraph} and use it to
 filter the stream.
@@ -621,6 +618,42 @@ would be more efficient.
 @item -copyinkf[:@var{stream_specifier}] (@emph{output,per-stream})
 When doing stream copy, copy also non-key frames found at the
 beginning.
+
+@item -hwaccel[:@var{stream_specifier}] @var{hwaccel} (@emph{input,per-stream})
+Use hardware acceleration to decode the matching stream(s). The allowed values
+of @var{hwaccel} are:
+@table @option
+@item none
+Do not use any hardware acceleration (the default).
+
+@item auto
+Automatically select the hardware acceleration method.
+
+@item vdpau
+Use VDPAU (Video Decode and Presentation API for Unix) hardware acceleration.
+@end table
+
+This option has no effect if the selected hwaccel is not available or not
+supported by the chosen decoder.
+
+Note that most acceleration methods are intended for playback and will not be
+faster than software decoding on modern CPUs. Additionally, @command{ffmpeg}
+will usually need to copy the decoded frames from the GPU memory into the system
+memory, resulting in further performance loss. This option is thus mainly
+useful for testing.
+
+@item -hwaccel_device[:@var{stream_specifier}] @var{hwaccel_device} (@emph{input,per-stream})
+Select a device to use for hardware acceleration.
+
+This option only makes sense when the @option{-hwaccel} option is also
+specified. Its exact meaning depends on the specific hardware acceleration
+method chosen.
+
+@table @option
+@item vdpau
+For VDPAU, this option specifies the X11 display/screen to use. If this option
+is not specified, the value of the @var{DISPLAY} environment variable is used
+@end table
 @end table
 
 @section Audio Options
@@ -673,8 +706,6 @@ stereo but not 6 channels as 5.1. The default is to always try to guess. Use
 @section Subtitle options:
 
 @table @option
-@item -slang @var{code}
-Set the ISO 639 language code (3 letters) of the current subtitle stream.
 @item -scodec @var{codec} (@emph{input/output})
 Set the subtitle codec. This is an alias for @code{-codec:s}.
 @item -sn (@emph{output})
@@ -1077,12 +1108,14 @@ transcoding. Use @option{-noaccurate_seek} to disable it, which may be useful
 e.g. when copying some streams and transcoding the others.
 
 @item -override_ffserver (@emph{global})
-Overrides the input specifications from ffserver. Using this option you can
-map any input stream to ffserver and control many aspects of the encoding from
-ffmpeg. Without this option ffmpeg will transmit to ffserver what is requested by
-ffserver.
+Overrides the input specifications from @command{ffserver}. Using this
+option you can map any input stream to @command{ffserver} and control
+many aspects of the encoding from @command{ffmpeg}. Without this
+option @command{ffmpeg} will transmit to @command{ffserver} what is
+requested by @command{ffserver}.
+
 The option is intended for cases where features are needed that cannot be
-specified to ffserver but can be to ffmpeg.
+specified to @command{ffserver} but can be to @command{ffmpeg}.
 
 @end table
 

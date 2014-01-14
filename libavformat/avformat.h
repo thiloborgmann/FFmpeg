@@ -756,6 +756,7 @@ typedef struct AVStream {
         int64_t last_dts;
         int64_t duration_gcd;
         int duration_count;
+        int64_t rfps_duration_sum;
         double (*duration_error)[2][MAX_STD_TIMEBASES];
         int64_t codec_info_duration;
         int64_t codec_info_duration_fields;
@@ -892,6 +893,10 @@ typedef struct AVStream {
      */
     int pts_wrap_behavior;
 
+    /**
+     * Internal data to prevent doing update_initial_durations() twice
+     */
+    int update_initial_durations_done;
 } AVStream;
 
 AVRational av_stream_get_r_frame_rate(const AVStream *s);

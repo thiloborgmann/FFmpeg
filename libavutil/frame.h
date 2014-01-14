@@ -22,13 +22,12 @@
 
 #include <stdint.h>
 
-#include "libavcodec/version.h"
-
 #include "avutil.h"
 #include "buffer.h"
 #include "dict.h"
 #include "rational.h"
 #include "samplefmt.h"
+#include "version.h"
 
 enum AVColorSpace{
     AVCOL_SPC_RGB         =  0,
@@ -58,6 +57,21 @@ enum AVFrameSideDataType {
      * The data is the AVPanScan struct defined in libavcodec.
      */
     AV_FRAME_DATA_PANSCAN,
+    /**
+     * ATSC A53 Part 4 Closed Captions.
+     * A53 CC bitstream is stored as uint8_t in AVFrameSideData.data.
+     * The number of bytes of CC data is AVFrameSideData.size.
+     */
+    AV_FRAME_DATA_A53_CC,
+    /**
+     * Stereoscopic 3d metadata.
+     * The data is the AVStereo3D struct defined in libavutil/stereo3d.h.
+     */
+    AV_FRAME_DATA_STEREO3D,
+    /**
+     * The data is the AVMatrixEncoding enum defined in libavutil/channel_layout.h.
+     */
+    AV_FRAME_DATA_MATRIXENCODING,
 };
 
 typedef struct AVFrameSideData {

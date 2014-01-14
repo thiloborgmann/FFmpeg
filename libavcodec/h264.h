@@ -617,6 +617,14 @@ typedef struct H264Context {
     int prev_interlaced_frame;
 
     /**
+     * frame_packing_arrangment SEI message
+     */
+    int sei_frame_packing_present;
+    int frame_packing_arrangement_type;
+    int content_interpretation_type;
+    int quincunx_subsampling;
+
+    /**
      * Bit set of clock types for fields/frames in picture timing SEI message.
      * For each found ct_type, appropriate bit is set (e.g., bit 1 for
      * interlaced).
@@ -687,8 +695,6 @@ typedef struct H264Context {
     int parse_last_mb;
     uint8_t *edge_emu_buffer;
     int16_t *dc_val_base;
-
-    uint8_t *visualization_buffer[3]; ///< temporary buffer vor MV visualization
 
     AVBufferPool *qscale_table_pool;
     AVBufferPool *mb_type_pool;
