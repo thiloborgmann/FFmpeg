@@ -171,6 +171,8 @@ typedef struct OptionsContext {
     int        nb_intra_matrices;
     SpecifierOpt *inter_matrices;
     int        nb_inter_matrices;
+    SpecifierOpt *chroma_intra_matrices;
+    int        nb_chroma_intra_matrices;
     SpecifierOpt *top_field_first;
     int        nb_top_field_first;
     SpecifierOpt *metadata_map;
@@ -253,7 +255,6 @@ typedef struct InputStream {
     int64_t filter_in_rescale_delta_last;
 
     double ts_scale;
-    int is_start;            /* is 1 at the start and after a discontinuity */
     int saw_first_ts;
     int showed_multi_packet_warning;
     AVDictionary *opts;
@@ -325,6 +326,7 @@ typedef struct InputFile {
 
 #if HAVE_PTHREADS
     pthread_t thread;           /* thread reading from this file */
+    int non_blocking;           /* reading packets from the thread should not block */
     int finished;               /* the thread has exited */
     int joined;                 /* the thread has been joined */
     pthread_mutex_t fifo_lock;  /* lock for access to fifo */
@@ -343,6 +345,11 @@ enum forced_keyframes_const {
 };
 
 extern const char *const forced_keyframes_const_names[];
+
+typedef enum {
+    ENCODER_FINISHED = 1,
+    MUXER_FINISHED = 2,
+} OSTFinished ;
 
 typedef struct OutputStream {
     int file_index;          /* file index */
@@ -397,7 +404,7 @@ typedef struct OutputStream {
     AVDictionary *swr_opts;
     AVDictionary *resample_opts;
     char *apad;
-    int finished;        /* no more packets should be written for this stream */
+    OSTFinished finished;        /* no more packets should be written for this stream */
     int unavailable;                     /* true if the steram is unavailable (possibly temporarily) */
     int stream_copy;
     const char *attachment_filename;

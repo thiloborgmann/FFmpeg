@@ -31,6 +31,7 @@
 #include "libavutil/avassert.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/internal.h"
+#include "libavutil/timer.h"
 #include "avcodec.h"
 #include "dsputil.h"
 #include "h264chroma.h"
@@ -415,15 +416,21 @@ fail:
  */
 static int alloc_frame_buffer(MpegEncContext *s, Picture *pic)
 {
+    int edges_needed = av_codec_is_encoder(s->avctx->codec);
     int r, ret;
 
     pic->tf.f = &pic->f;
     if (s->codec_id != AV_CODEC_ID_WMV3IMAGE &&
         s->codec_id != AV_CODEC_ID_VC1IMAGE  &&
-        s->codec_id != AV_CODEC_ID_MSS2)
+        s->codec_id != AV_CODEC_ID_MSS2) {
+        if (edges_needed) {
+            pic->f.width  = s->avctx->width  + 2 * EDGE_WIDTH;
+            pic->f.height = s->avctx->height + 2 * EDGE_WIDTH;
+        }
+
         r = ff_thread_get_buffer(s->avctx, &pic->tf,
                                  pic->reference ? AV_GET_BUFFER_FLAG_REF : 0);
-    else {
+    } else {
         pic->f.width  = s->avctx->width;
         pic->f.height = s->avctx->height;
         pic->f.format = s->avctx->pix_fmt;
@@ -434,6 +441,18 @@ static int alloc_frame_buffer(MpegEncContext *s, Picture *pic)
         av_log(s->avctx, AV_LOG_ERROR, "get_buffer() failed (%d %p)\n",
                r, pic->f.data[0]);
         return -1;
+    }
+
+    if (edges_needed) {
+        int i;
+        for (i = 0; pic->f.data[i]; i++) {
+            int offset = (EDGE_WIDTH >> (i ? s->chroma_y_shift : 0)) *
+                         pic->f.linesize[i] +
+                         (EDGE_WIDTH >> (i ? s->chroma_x_shift : 0));
+            pic->f.data[i] += offset;
+        }
+        pic->f.width  = s->avctx->width;
+        pic->f.height = s->avctx->height;
     }
 
     if (s->avctx->hwaccel) {
@@ -1755,18 +1774,21 @@ int ff_MPV_frame_start(MpegEncContext *s, AVCodecContext *avctx)
             return -1;
         }
 
-        memset(s->last_picture_ptr->f.data[0], 0x80,
-               avctx->height * s->last_picture_ptr->f.linesize[0]);
-        memset(s->last_picture_ptr->f.data[1], 0x80,
-               (avctx->height >> v_chroma_shift) *
-               s->last_picture_ptr->f.linesize[1]);
-        memset(s->last_picture_ptr->f.data[2], 0x80,
-               (avctx->height >> v_chroma_shift) *
-               s->last_picture_ptr->f.linesize[2]);
-
-        if(s->codec_id == AV_CODEC_ID_FLV1 || s->codec_id == AV_CODEC_ID_H263){
+        if (!avctx->hwaccel) {
             for(i=0; i<avctx->height; i++)
-            memset(s->last_picture_ptr->f.data[0] + s->last_picture_ptr->f.linesize[0]*i, 16, avctx->width);
+                memset(s->last_picture_ptr->f.data[0] + s->last_picture_ptr->f.linesize[0]*i,
+                       0x80, avctx->width);
+            for(i=0; i<FF_CEIL_RSHIFT(avctx->height, v_chroma_shift); i++) {
+                memset(s->last_picture_ptr->f.data[1] + s->last_picture_ptr->f.linesize[1]*i,
+                       0x80, FF_CEIL_RSHIFT(avctx->width, h_chroma_shift));
+                memset(s->last_picture_ptr->f.data[2] + s->last_picture_ptr->f.linesize[2]*i,
+                       0x80, FF_CEIL_RSHIFT(avctx->width, h_chroma_shift));
+            }
+
+            if(s->codec_id == AV_CODEC_ID_FLV1 || s->codec_id == AV_CODEC_ID_H263){
+                for(i=0; i<avctx->height; i++)
+                memset(s->last_picture_ptr->f.data[0] + s->last_picture_ptr->f.linesize[0]*i, 16, avctx->width);
+            }
         }
 
         ff_thread_report_progress(&s->last_picture_ptr->tf, INT_MAX, 0);
@@ -3003,10 +3025,9 @@ void ff_MPV_decode_mb(MpegEncContext *s, int16_t block[12][64]){
 /**
  * @param h is the normal height, this will be reduced automatically if needed for the last row
  */
-void ff_draw_horiz_band(AVCodecContext *avctx, DSPContext *dsp, Picture *cur,
+void ff_draw_horiz_band(AVCodecContext *avctx, Picture *cur,
                         Picture *last, int y, int h, int picture_structure,
-                        int first_field, int low_delay,
-                        int v_edge_pos, int h_edge_pos)
+                        int first_field, int low_delay)
 {
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(avctx->pix_fmt);
     int vshift = desc->log2_chroma_h;
@@ -3055,10 +3076,9 @@ void ff_draw_horiz_band(AVCodecContext *avctx, DSPContext *dsp, Picture *cur,
 
 void ff_mpeg_draw_horiz_band(MpegEncContext *s, int y, int h)
 {
-    ff_draw_horiz_band(s->avctx, &s->dsp, s->current_picture_ptr,
+    ff_draw_horiz_band(s->avctx, s->current_picture_ptr,
                        s->last_picture_ptr, y, h, s->picture_structure,
-                       s->first_field, s->low_delay,
-                       s->v_edge_pos, s->h_edge_pos);
+                       s->first_field, s->low_delay);
 }
 
 void ff_init_block_index(MpegEncContext *s){ //FIXME maybe rename

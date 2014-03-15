@@ -78,6 +78,8 @@ static int ogg_save(AVFormatContext *s)
         struct ogg_stream *os = ogg->streams + i;
         os->buf = av_mallocz(os->bufsize + FF_INPUT_BUFFER_PADDING_SIZE);
         memcpy(os->buf, ost->streams[i].buf, os->bufpos);
+        os->new_metadata      = NULL;
+        os->new_metadata_size = 0;
     }
 
     ogg->state = ost;
@@ -144,6 +146,8 @@ static int ogg_reset(AVFormatContext *s)
             os->lastpts = 0;
         }
         os->end_trimming = 0;
+        av_freep(&os->new_metadata);
+        os->new_metadata_size = 0;
     }
 
     ogg->page_pos = -1;
@@ -641,6 +645,7 @@ static int ogg_read_close(AVFormatContext *s)
             ogg->streams[i].codec->cleanup(s, i);
         }
         av_freep(&ogg->streams[i].private);
+        av_freep(&ogg->streams[i].new_metadata);
     }
     av_freep(&ogg->streams);
     return 0;
@@ -722,8 +727,16 @@ static void ogg_validate_keyframe(AVFormatContext *s, int idx, int pstart, int p
 {
     struct ogg *ogg = s->priv_data;
     struct ogg_stream *os = ogg->streams + idx;
-    if (psize && s->streams[idx]->codec->codec_id == AV_CODEC_ID_THEORA) {
-        if (!!(os->pflags & AV_PKT_FLAG_KEY) != !(os->buf[pstart] & 0x40)) {
+    int invalid = 0;
+    if (psize) {
+        switch (s->streams[idx]->codec->codec_id) {
+        case AV_CODEC_ID_THEORA:
+            invalid = !!(os->pflags & AV_PKT_FLAG_KEY) != !(os->buf[pstart] & 0x40);
+        break;
+        case AV_CODEC_ID_VP8:
+            invalid = !!(os->pflags & AV_PKT_FLAG_KEY) != !(os->buf[pstart] & 1);
+        }
+        if (invalid) {
             os->pflags ^= AV_PKT_FLAG_KEY;
             av_log(s, AV_LOG_WARNING, "Broken file, %skeyframe not correctly marked.\n",
                    (os->pflags & AV_PKT_FLAG_KEY) ? "" : "non-");
@@ -787,6 +800,15 @@ retry:
         }
         AV_WL32(side_data + 4, os->end_trimming);
         os->end_trimming = 0;
+    }
+
+    if (os->new_metadata) {
+        uint8_t *side_data = av_packet_new_side_data(pkt,
+                                                     AV_PKT_DATA_METADATA_UPDATE,
+                                                     os->new_metadata_size);
+        memcpy(side_data, os->new_metadata, os->new_metadata_size);
+        av_freep(&os->new_metadata);
+        os->new_metadata_size = 0;
     }
 
     return psize;

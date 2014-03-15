@@ -39,6 +39,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/opt.h"
 #include "libavutil/dict.h"
+#include "hevc.h"
 #include "rtpenc.h"
 #include "mov_chan.h"
 
@@ -614,7 +615,12 @@ static int get_cluster_duration(MOVTrack *track, int cluster_idx)
     else
         next_dts = track->cluster[cluster_idx + 1].dts;
 
-    return next_dts - track->cluster[cluster_idx].dts;
+    next_dts -= track->cluster[cluster_idx].dts;
+
+    av_assert0(next_dts >= 0);
+    av_assert0(next_dts <= INT_MAX);
+
+    return next_dts;
 }
 
 static int get_samples_per_packet(MOVTrack *track)
@@ -767,6 +773,16 @@ static int mov_write_avcc_tag(AVIOContext *pb, MOVTrack *track)
     return update_size(pb, pos);
 }
 
+static int mov_write_hvcc_tag(AVIOContext *pb, MOVTrack *track)
+{
+    int64_t pos = avio_tell(pb);
+
+    avio_wb32(pb, 0);
+    ffio_wfourcc(pb, "hvcC");
+    ff_isom_write_hvcc(pb, track->vos_data, track->vos_len, 0);
+    return update_size(pb, pos);
+}
+
 /* also used by all avid codecs (dv, imx, meridien) and their variants */
 static int mov_write_avid_tag(AVIOContext *pb, MOVTrack *track)
 {
@@ -823,6 +839,7 @@ static int mp4_get_codec_tag(AVFormatContext *s, MOVTrack *track)
         return 0;
 
     if      (track->enc->codec_id == AV_CODEC_ID_H264)      tag = MKTAG('a','v','c','1');
+    else if (track->enc->codec_id == AV_CODEC_ID_HEVC)      tag = MKTAG('h','e','v','1');
     else if (track->enc->codec_id == AV_CODEC_ID_AC3)       tag = MKTAG('a','c','-','3');
     else if (track->enc->codec_id == AV_CODEC_ID_DIRAC)     tag = MKTAG('d','r','a','c');
     else if (track->enc->codec_id == AV_CODEC_ID_MOV_TEXT)  tag = MKTAG('t','x','3','g');
@@ -901,10 +918,13 @@ static AVRational find_fps(AVFormatContext *s, AVStream *st)
 
 static int mov_get_mpeg2_xdcam_codec_tag(AVFormatContext *s, MOVTrack *track)
 {
-    int tag = MKTAG('m', '2', 'v', '1'); //fallback tag
+    int tag = track->enc->codec_tag;
     int interlaced = track->enc->field_order > AV_FIELD_PROGRESSIVE;
     AVStream *st = track->st;
     int rate = av_q2d(find_fps(s, st));
+
+    if (!tag)
+        tag = MKTAG('m', '2', 'v', '1'); //fallback tag
 
     if (track->enc->pix_fmt == AV_PIX_FMT_YUV420P) {
         if (track->enc->width == 1280 && track->enc->height == 720) {
@@ -1221,6 +1241,8 @@ static int mov_write_video_tag(AVIOContext *pb, MOVTrack *track)
         avio_wb32(pb, 0);
     } else if (track->enc->codec_id == AV_CODEC_ID_DNXHD)
         mov_write_avid_tag(pb, track);
+    else if (track->enc->codec_id == AV_CODEC_ID_HEVC)
+        mov_write_hvcc_tag(pb, track);
     else if (track->enc->codec_id == AV_CODEC_ID_H264) {
         mov_write_avcc_tag(pb, track);
         if (track->mode == MODE_IPOD)
@@ -2203,7 +2225,8 @@ static int mov_write_ilst_tag(AVIOContext *pb, MOVMuxContext *mov,
     mov_write_string_metadata(s, pb, "\251wrt", "composer" , 1);
     mov_write_string_metadata(s, pb, "\251alb", "album"    , 1);
     mov_write_string_metadata(s, pb, "\251day", "date"     , 1);
-    mov_write_string_tag(pb, "\251too", LIBAVFORMAT_IDENT, 0, 1);
+    if (!mov_write_string_metadata(s, pb, "\251too", "encoding_tool", 1))
+        mov_write_string_tag(pb, "\251too", LIBAVFORMAT_IDENT, 0, 1);
     mov_write_string_metadata(s, pb, "\251cmt", "comment"  , 1);
     mov_write_string_metadata(s, pb, "\251gen", "genre"    , 1);
     mov_write_string_metadata(s, pb, "\251cpy", "copyright", 1);
@@ -2219,6 +2242,7 @@ static int mov_write_ilst_tag(AVIOContext *pb, MOVMuxContext *mov,
     mov_write_int8_metadata  (s, pb, "stik",    "media_type",1);
     mov_write_int8_metadata  (s, pb, "hdvd",    "hd_video",  1);
     mov_write_int8_metadata  (s, pb, "pgap",    "gapless_playback",1);
+    mov_write_int8_metadata  (s, pb, "cpil",    "compilation", 1);
     mov_write_trkn_tag(pb, mov, s, 0); // track number
     mov_write_trkn_tag(pb, mov, s, 1); // disc number
     mov_write_tmpo_tag(pb, s);
@@ -2482,7 +2506,10 @@ static int mov_write_moov_tag(AVIOContext *pb, MOVMuxContext *mov,
             int src_trk = mov->tracks[i].src_track;
             mov->tracks[src_trk].tref_tag = mov->tracks[i].tag;
             mov->tracks[src_trk].tref_id  = mov->tracks[i].track_id;
-            mov->tracks[i].track_duration = mov->tracks[src_trk].track_duration;
+            //src_trk may have a different timescale than the tmcd track
+            mov->tracks[i].track_duration = av_rescale(mov->tracks[src_trk].track_duration,
+                                                       mov->tracks[i].timescale,
+                                                       mov->tracks[src_trk].timescale);
         }
     }
 
@@ -3255,6 +3282,17 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     int size = pkt->size;
     uint8_t *reformatted_data = NULL;
 
+    if (trk->entry) {
+        int64_t duration = pkt->dts - trk->cluster[trk->entry - 1].dts;
+        if (duration < 0 || duration > INT_MAX) {
+            av_log(s, AV_LOG_ERROR, "Application provided duration: %"PRId64" / timestamp: %"PRId64" is out of range for mov/mp4 format\n",
+                duration, pkt->dts
+            );
+
+            pkt->dts = trk->cluster[trk->entry - 1].dts + 1;
+            pkt->pts = AV_NOPTS_VALUE;
+        }
+    }
     if (mov->flags & FF_MOV_FLAG_FRAGMENT) {
         int ret;
         if (mov->fragments > 0) {
@@ -3320,6 +3358,15 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
             avio_write(pb, reformatted_data, size);
         } else {
             size = ff_avc_parse_nal_units(pb, pkt->data, pkt->size);
+        }
+    } else if (enc->codec_id == AV_CODEC_ID_HEVC && trk->vos_len > 6 &&
+               (AV_RB24(trk->vos_data) == 1 || AV_RB32(trk->vos_data) == 1)) {
+        /* extradata is Annex B, assume the bitstream is too and convert it */
+        if (trk->hint_track >= 0 && trk->hint_track < mov->nb_streams) {
+            ff_hevc_annexb2mp4_buf(pkt->data, &reformatted_data, &size, 0, NULL);
+            avio_write(pb, reformatted_data, size);
+        } else {
+            size = ff_hevc_annexb2mp4(pb, pkt->data, pkt->size, 0, NULL);
         }
     } else {
         avio_write(pb, pkt->data, size);
@@ -3558,7 +3605,7 @@ static int mov_create_chapter_track(AVFormatContext *s, int tracknum)
             track->enc->extradata = buf;
             track->enc->extradata_size = size;
         } else {
-            av_free(&buf);
+            av_freep(&buf);
         }
     }
 #endif
@@ -3745,7 +3792,7 @@ static int mov_write_header(AVFormatContext *s)
     }
 
     if (!supports_edts(mov) && s->avoid_negative_ts < 0) {
-        s->avoid_negative_ts = 1;
+        s->avoid_negative_ts = 2;
     }
 
     /* Non-seekable output is ok if using fragmentation. If ism_lookahead
@@ -3926,13 +3973,6 @@ static int mov_write_header(AVFormatContext *s)
 
     enable_tracks(s);
 
-    if (mov->mode == MODE_ISM) {
-        /* If no fragmentation options have been set, set a default. */
-        if (!(mov->flags & (FF_MOV_FLAG_FRAG_KEYFRAME |
-                            FF_MOV_FLAG_FRAG_CUSTOM)) &&
-            !mov->max_fragment_duration && !mov->max_fragment_size)
-            mov->flags |= FF_MOV_FLAG_FRAG_KEYFRAME;
-    }
 
     if (mov->reserved_moov_size){
         mov->reserved_moov_pos= avio_tell(pb);
@@ -3940,7 +3980,13 @@ static int mov_write_header(AVFormatContext *s)
             avio_skip(pb, mov->reserved_moov_size);
     }
 
-    if (!(mov->flags & FF_MOV_FLAG_FRAGMENT)) {
+    if (mov->flags & FF_MOV_FLAG_FRAGMENT) {
+        /* If no fragmentation options have been set, set a default. */
+        if (!(mov->flags & (FF_MOV_FLAG_FRAG_KEYFRAME |
+                            FF_MOV_FLAG_FRAG_CUSTOM)) &&
+            !mov->max_fragment_duration && !mov->max_fragment_size)
+            mov->flags |= FF_MOV_FLAG_FRAG_KEYFRAME;
+    } else {
         if (mov->flags & FF_MOV_FLAG_FASTSTART)
             mov->reserved_moov_pos = avio_tell(pb);
         mov_write_mdat_tag(pb, mov);

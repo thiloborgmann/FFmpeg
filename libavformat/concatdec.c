@@ -85,18 +85,28 @@ static int add_file(AVFormatContext *avf, char *filename, ConcatFile **rfile,
     ConcatContext *cat = avf->priv_data;
     ConcatFile *file;
     char *url = NULL;
-    size_t url_len;
+    const char *proto;
+    size_t url_len, proto_len;
     int ret;
 
     if (cat->safe > 0 && !safe_filename(filename)) {
         av_log(avf, AV_LOG_ERROR, "Unsafe file name '%s'\n", filename);
         FAIL(AVERROR(EPERM));
     }
-    url_len = strlen(avf->filename) + strlen(filename) + 16;
-    if (!(url = av_malloc(url_len)))
-        FAIL(AVERROR(ENOMEM));
-    ff_make_absolute_url(url, url_len, avf->filename, filename);
-    av_freep(&filename);
+
+    proto = avio_find_protocol_name(filename);
+    proto_len = proto ? strlen(proto) : 0;
+    if (!memcmp(filename, proto, proto_len) &&
+        (filename[proto_len] == ':' || filename[proto_len] == ',')) {
+        url = filename;
+        filename = NULL;
+    } else {
+        url_len = strlen(avf->filename) + strlen(filename) + 16;
+        if (!(url = av_malloc(url_len)))
+            FAIL(AVERROR(ENOMEM));
+        ff_make_absolute_url(url, url_len, avf->filename, filename);
+        av_freep(&filename);
+    }
 
     if (cat->nb_files >= *nb_files_alloc) {
         size_t n = FFMAX(*nb_files_alloc * 2, 16);
@@ -132,9 +142,16 @@ static int open_file(AVFormatContext *avf, unsigned fileno)
 
     if (cat->avf)
         avformat_close_input(&cat->avf);
+
+    cat->avf = avformat_alloc_context();
+    if (!cat->avf)
+        return AVERROR(ENOMEM);
+
+    cat->avf->interrupt_callback = avf->interrupt_callback;
     if ((ret = avformat_open_input(&cat->avf, file->url, NULL, NULL)) < 0 ||
         (ret = avformat_find_stream_info(cat->avf, NULL)) < 0) {
         av_log(avf, AV_LOG_ERROR, "Impossible to open '%s'\n", file->url);
+        avformat_close_input(&cat->avf);
         return ret;
     }
     cat->cur_file = file;

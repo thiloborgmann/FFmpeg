@@ -31,6 +31,7 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/crc.h"
+#include "libavutil/downmix_info.h"
 #include "libavutil/opt.h"
 #include "internal.h"
 #include "aac_ac3_parser.h"
@@ -75,6 +76,15 @@ static const float gain_levels[9] = {
     LEVEL_MINUS_6DB,
     LEVEL_ZERO,
     LEVEL_MINUS_9DB
+};
+
+/** Adjustments in dB gain (LFE, +10 to -21 dB) */
+static const float gain_levels_lfe[32] = {
+    3.162275, 2.818382, 2.511886, 2.238719, 1.995261, 1.778278, 1.584893,
+    1.412536, 1.258924, 1.122018, 1.000000, 0.891251, 0.794328, 0.707946,
+    0.630957, 0.562341, 0.501187, 0.446683, 0.398107, 0.354813, 0.316227,
+    0.281838, 0.251188, 0.223872, 0.199526, 0.177828, 0.158489, 0.141253,
+    0.125892, 0.112201, 0.100000, 0.089125
 };
 
 /**
@@ -227,20 +237,20 @@ static int ac3_parse_header(AC3DecodeContext *s)
 
     skip_bits(gbc, 2); //skip copyright bit and original bitstream bit
 
-    /* default dolby matrix encoding modes */
-    s->dolby_surround_ex_mode = AC3_DSUREXMOD_NOTINDICATED;
-    s->dolby_headphone_mode   = AC3_DHEADPHONMOD_NOTINDICATED;
-
-    /* skip the timecodes or parse the Alternate Bit Stream Syntax
-       TODO: read & use the xbsi1 downmix levels */
+    /* skip the timecodes or parse the Alternate Bit Stream Syntax */
     if (s->bitstream_id != 6) {
         if (get_bits1(gbc))
             skip_bits(gbc, 14); //skip timecode1
         if (get_bits1(gbc))
             skip_bits(gbc, 14); //skip timecode2
     } else {
-        if (get_bits1(gbc))
-            skip_bits(gbc, 14); //skip xbsi1
+        if (get_bits1(gbc)) {
+            s->preferred_downmix       = get_bits(gbc, 2);
+            s->center_mix_level_ltrt   = get_bits(gbc, 3);
+            s->surround_mix_level_ltrt = av_clip(get_bits(gbc, 3), 3, 7);
+            s->center_mix_level        = get_bits(gbc, 3);
+            s->surround_mix_level      = av_clip(get_bits(gbc, 3), 3, 7);
+        }
         if (get_bits1(gbc)) {
             s->dolby_surround_ex_mode = get_bits(gbc, 2);
             s->dolby_headphone_mode   = get_bits(gbc, 2);
@@ -264,10 +274,10 @@ static int ac3_parse_header(AC3DecodeContext *s)
  */
 static int parse_frame_header(AC3DecodeContext *s)
 {
-    AC3HeaderInfo hdr;
+    AC3HeaderInfo hdr, *phdr=&hdr;
     int err;
 
-    err = avpriv_ac3_parse_header(&s->gbc, &hdr);
+    err = avpriv_ac3_parse_header2(&s->gbc, &phdr);
     if (err)
         return err;
 
@@ -284,12 +294,18 @@ static int parse_frame_header(AC3DecodeContext *s)
     s->fbw_channels                 = s->channels - s->lfe_on;
     s->lfe_ch                       = s->fbw_channels + 1;
     s->frame_size                   = hdr.frame_size;
+    s->preferred_downmix            = AC3_DMIXMOD_NOTINDICATED;
     s->center_mix_level             = hdr.center_mix_level;
+    s->center_mix_level_ltrt        = 4; // -3.0dB
     s->surround_mix_level           = hdr.surround_mix_level;
+    s->surround_mix_level_ltrt      = 4; // -3.0dB
+    s->lfe_mix_level_exists         = 0;
     s->num_blocks                   = hdr.num_blocks;
     s->frame_type                   = hdr.frame_type;
     s->substreamid                  = hdr.substreamid;
     s->dolby_surround_mode          = hdr.dolby_surround_mode;
+    s->dolby_surround_ex_mode       = AC3_DSUREXMOD_NOTINDICATED;
+    s->dolby_headphone_mode         = AC3_DHEADPHONMOD_NOTINDICATED;
 
     if (s->lfe_on) {
         s->start_freq[s->lfe_ch]     = 0;
@@ -776,8 +792,13 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
     i = !s->channel_mode;
     do {
         if (get_bits1(gbc)) {
-            s->dynamic_range[i] = powf(dynamic_range_tab[get_bits(gbc, 8)],
-                                       s->drc_scale);
+            /* Allow asymmetric application of DRC when drc_scale > 1.
+               Amplification of quiet sounds is enhanced */
+            float range = dynamic_range_tab[get_bits(gbc, 8)];
+            if (range > 1.0 || s->drc_scale <= 1.0)
+                s->dynamic_range[i] = powf(range, s->drc_scale);
+            else
+                s->dynamic_range[i] = range;
         } else if (blk == 0) {
             s->dynamic_range[i] = 1.0f;
         }
@@ -1301,6 +1322,7 @@ static int ac3_decode_frame(AVCodecContext * avctx, void *data,
     const uint8_t *channel_map;
     const float *output[AC3_MAX_CHANNELS];
     enum AVMatrixEncoding matrix_encoding;
+    AVDownmixInfo *downmix_info;
 
     /* copy input buffer to decoder context to avoid reading past the end
        of the buffer, which can be caused by a damaged input stream. */
@@ -1478,6 +1500,33 @@ static int ac3_decode_frame(AVCodecContext * avctx, void *data,
     if ((ret = ff_side_data_update_matrix_encoding(frame, matrix_encoding)) < 0)
         return ret;
 
+    /* AVDownmixInfo */
+    if ((downmix_info = av_downmix_info_update_side_data(frame))) {
+        switch (s->preferred_downmix) {
+        case AC3_DMIXMOD_LTRT:
+            downmix_info->preferred_downmix_type = AV_DOWNMIX_TYPE_LTRT;
+            break;
+        case AC3_DMIXMOD_LORO:
+            downmix_info->preferred_downmix_type = AV_DOWNMIX_TYPE_LORO;
+            break;
+        case AC3_DMIXMOD_DPLII:
+            downmix_info->preferred_downmix_type = AV_DOWNMIX_TYPE_DPLII;
+            break;
+        default:
+            downmix_info->preferred_downmix_type = AV_DOWNMIX_TYPE_UNKNOWN;
+            break;
+        }
+        downmix_info->center_mix_level        = gain_levels[s->       center_mix_level];
+        downmix_info->center_mix_level_ltrt   = gain_levels[s->  center_mix_level_ltrt];
+        downmix_info->surround_mix_level      = gain_levels[s->     surround_mix_level];
+        downmix_info->surround_mix_level_ltrt = gain_levels[s->surround_mix_level_ltrt];
+        if (s->lfe_mix_level_exists)
+            downmix_info->lfe_mix_level       = gain_levels_lfe[s->lfe_mix_level];
+        else
+            downmix_info->lfe_mix_level       = 0.0; // -inf dB
+    } else
+        return AVERROR(ENOMEM);
+
     *got_frame_ptr = 1;
 
     return FFMIN(buf_size, s->frame_size);
@@ -1498,7 +1547,7 @@ static av_cold int ac3_decode_end(AVCodecContext *avctx)
 #define OFFSET(x) offsetof(AC3DecodeContext, x)
 #define PAR (AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_AUDIO_PARAM)
 static const AVOption options[] = {
-    { "drc_scale", "percentage of dynamic range compression to apply", OFFSET(drc_scale), AV_OPT_TYPE_FLOAT, {.dbl = 1.0}, 0.0, 1.0, PAR },
+    { "drc_scale", "percentage of dynamic range compression to apply", OFFSET(drc_scale), AV_OPT_TYPE_FLOAT, {.dbl = 1.0}, 0.0, 6.0, PAR },
 
 {"dmix_mode", "Preferred Stereo Downmix Mode", OFFSET(preferred_stereo_downmix), AV_OPT_TYPE_INT, {.i64 = -1 }, -1, 2, 0, "dmix_mode"},
 {"ltrt_cmixlev",   "Lt/Rt Center Mix Level",   OFFSET(ltrt_center_mix_level),    AV_OPT_TYPE_FLOAT, {.dbl = -1.0 }, -1.0, 2.0, 0},

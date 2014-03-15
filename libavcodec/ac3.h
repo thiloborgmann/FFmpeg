@@ -106,6 +106,14 @@ typedef enum AC3DolbyHeadphoneMode {
     AC3_DHEADPHONMOD_RESERVED
 } AC3DolbyHeadphoneMode;
 
+/** Preferred Stereo Downmix mode */
+typedef enum AC3PreferredStereoDownmixMode {
+    AC3_DMIXMOD_NOTINDICATED = 0,
+    AC3_DMIXMOD_LTRT,
+    AC3_DMIXMOD_LORO,
+    AC3_DMIXMOD_DPLII // reserved value in A/52, but used by encoders to indicate DPL2
+} AC3PreferredStereoDownmixMode;
+
 typedef struct AC3BitAllocParameters {
     int sr_code;
     int sr_shift;
@@ -134,7 +142,9 @@ typedef struct AC3HeaderInfo {
     int surround_mix_level;                 ///< Surround mix level index
     uint16_t channel_map;
     int num_blocks;                         ///< number of audio blocks
+#if AV_HAVE_INCOMPATIBLE_LIBAV_ABI
     int dolby_surround_mode;
+#endif
     /** @} */
 
     /** @name Derived values
@@ -147,6 +157,9 @@ typedef struct AC3HeaderInfo {
     uint16_t frame_size;
     uint64_t channel_layout;
     /** @} */
+#if !AV_HAVE_INCOMPATIBLE_LIBAV_ABI
+    int dolby_surround_mode;
+#endif
 } AC3HeaderInfo;
 
 typedef enum {

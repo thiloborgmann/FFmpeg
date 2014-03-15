@@ -34,6 +34,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
+#include "libavutil/timer.h"
 #include "avcodec.h"
 #include "dct.h"
 #include "dsputil.h"
@@ -226,7 +227,8 @@ av_cold int ff_dct_encode_init(MpegEncContext *s) {
     if (ARCH_X86)
         ff_dct_encode_init_x86(s);
 
-    ff_h263dsp_init(&s->h263dsp);
+    if (CONFIG_H263_ENCODER)
+        ff_h263dsp_init(&s->h263dsp);
     if (!s->dct_quantize)
         s->dct_quantize = ff_dct_quantize_c;
     if (!s->denoise_dct)
@@ -407,7 +409,7 @@ av_cold int ff_MPV_encode_init(AVCodecContext *avctx)
         avctx->bit_rate * av_q2d(avctx->time_base) >
             avctx->bit_rate_tolerance) {
         av_log(avctx, AV_LOG_ERROR,
-               "bitrate tolerance too small for bitrate\n");
+               "bitrate tolerance %d too small for bitrate %d\n", avctx->bit_rate_tolerance, avctx->bit_rate);
         return -1;
     }
 
@@ -1035,6 +1037,12 @@ static int load_input_picture(MpegEncContext *s, const AVFrame *pic_arg)
             direct = 0;
         if (pic_arg->linesize[2] != s->uvlinesize)
             direct = 0;
+        if ((s->width & 15) || (s->height & 15))
+            direct = 0;
+        if (((intptr_t)(pic_arg->data[0])) & (STRIDE_ALIGN-1))
+            direct = 0;
+        if (s->linesize & (STRIDE_ALIGN-1))
+            direct = 0;
 
         av_dlog(s->avctx, "%d %d %td %td\n", pic_arg->linesize[0],
                 pic_arg->linesize[1], s->linesize, s->uvlinesize);
@@ -1599,7 +1607,7 @@ static int frame_start(MpegEncContext *s)
 }
 
 int ff_MPV_encode_picture(AVCodecContext *avctx, AVPacket *pkt,
-                          AVFrame *pic_arg, int *got_packet)
+                          const AVFrame *pic_arg, int *got_packet)
 {
     MpegEncContext *s = avctx->priv_data;
     int i, stuffing_count, ret;
@@ -2439,7 +2447,7 @@ static inline void encode_mb_hq(MpegEncContext *s, MpegEncContext *backup, MpegE
 }
 
 static int sse(MpegEncContext *s, uint8_t *src1, uint8_t *src2, int w, int h, int stride){
-    uint32_t *sq = ff_squareTbl + 256;
+    uint32_t *sq = ff_square_tab + 256;
     int acc=0;
     int x,y;
 
@@ -3384,7 +3392,7 @@ static int encode_picture(MpegEncContext *s, int picture_number)
         update_qscale(s);
     }
 
-    if(s->codec_id != AV_CODEC_ID_AMV){
+    if(s->codec_id != AV_CODEC_ID_AMV && s->codec_id != AV_CODEC_ID_MJPEG){
         if(s->q_chroma_intra_matrix   != s->q_intra_matrix  ) av_freep(&s->q_chroma_intra_matrix);
         if(s->q_chroma_intra_matrix16 != s->q_intra_matrix16) av_freep(&s->q_chroma_intra_matrix16);
         s->q_chroma_intra_matrix   = s->q_intra_matrix;
@@ -3500,12 +3508,22 @@ static int encode_picture(MpegEncContext *s, int picture_number)
         s->qscale= 3; //reduce clipping problems
 
     if (s->out_format == FMT_MJPEG) {
+        const uint16_t *  luma_matrix = ff_mpeg1_default_intra_matrix;
+        const uint16_t *chroma_matrix = ff_mpeg1_default_intra_matrix;
+
+        if (s->avctx->intra_matrix) {
+            chroma_matrix =
+            luma_matrix = s->avctx->intra_matrix;
+        }
+        if (s->avctx->chroma_intra_matrix)
+            chroma_matrix = s->avctx->chroma_intra_matrix;
+
         /* for mjpeg, we do include qscale in the matrix */
         for(i=1;i<64;i++){
             int j= s->dsp.idct_permutation[i];
 
-            s->chroma_intra_matrix[j] =
-            s->intra_matrix[j] = av_clip_uint8((ff_mpeg1_default_intra_matrix[i] * s->qscale) >> 3);
+            s->chroma_intra_matrix[j] = av_clip_uint8((chroma_matrix[i] * s->qscale) >> 3);
+            s->       intra_matrix[j] = av_clip_uint8((  luma_matrix[i] * s->qscale) >> 3);
         }
         s->y_dc_scale_table=
         s->c_dc_scale_table= ff_mpeg2_dc_scale_table[s->intra_dc_precision];

@@ -22,6 +22,8 @@ FFLIBS-$(CONFIG_SCALE_FILTER)                += swscale
 FFLIBS-$(CONFIG_SHOWSPECTRUM_FILTER)         += avcodec
 FFLIBS-$(CONFIG_SMARTBLUR_FILTER)            += swscale
 FFLIBS-$(CONFIG_SUBTITLES_FILTER)            += avformat avcodec
+EBUR128LIBS-$(CONFIG_SWRESAMPLE)              = swresample
+FFLIBS-$(CONFIG_EBUR128_FILTER)              += $(EBUR128LIBS-yes)
 
 HEADERS = asrc_abuffer.h                                                \
           avcodec.h                                                     \
@@ -125,6 +127,7 @@ OBJS-$(CONFIG_CROPDETECT_FILTER)             += vf_cropdetect.o
 OBJS-$(CONFIG_CURVES_FILTER)                 += vf_curves.o
 OBJS-$(CONFIG_DCTDNOIZ_FILTER)               += vf_dctdnoiz.o
 OBJS-$(CONFIG_DECIMATE_FILTER)               += vf_decimate.o
+OBJS-$(CONFIG_DEJUDDER_FILTER)               += vf_dejudder.o
 OBJS-$(CONFIG_DELOGO_FILTER)                 += vf_delogo.o
 OBJS-$(CONFIG_DESHAKE_FILTER)                += vf_deshake.o
 OBJS-$(CONFIG_DRAWBOX_FILTER)                += vf_drawbox.o
@@ -192,6 +195,7 @@ OBJS-$(CONFIG_SETPTS_FILTER)                 += setpts.o
 OBJS-$(CONFIG_SETSAR_FILTER)                 += vf_aspect.o
 OBJS-$(CONFIG_SETTB_FILTER)                  += f_settb.o
 OBJS-$(CONFIG_SHOWINFO_FILTER)               += vf_showinfo.o
+OBJS-$(CONFIG_SHUFFLEPLANES_FILTER)          += vf_shuffleplanes.o
 OBJS-$(CONFIG_SMARTBLUR_FILTER)              += vf_smartblur.o
 OBJS-$(CONFIG_SPLIT_FILTER)                  += split.o
 OBJS-$(CONFIG_SPP_FILTER)                    += vf_spp.o

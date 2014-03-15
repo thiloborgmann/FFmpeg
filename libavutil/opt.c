@@ -195,6 +195,15 @@ static int set_string(void *obj, const AVOption *o, const char *val, uint8_t **d
 static int set_string_number(void *obj, void *target_obj, const AVOption *o, const char *val, void *dst)
 {
     int ret = 0, notfirst = 0;
+    int num, den;
+    char c;
+
+    if (sscanf(val, "%d%*1[:/]%d%c", &num, &den, &c) == 2) {
+        if ((ret = write_number(obj, o, dst, 1, den, num)) >= 0)
+            return ret;
+        ret = 0;
+    }
+
     for (;;) {
         int i, den = 1;
         char buf[256];
@@ -318,6 +327,12 @@ static int set_string_fmt(void *obj, const AVOption *o, const char *val, uint8_t
     min = FFMAX(o->min, -1);
     max = FFMIN(o->max, fmt_nb-1);
 
+    // hack for compatibility with old ffmpeg
+    if(min == 0 && max == 0) {
+        min = -1;
+        max = fmt_nb-1;
+    }
+
     if (fmt < min || fmt > max) {
         av_log(obj, AV_LOG_ERROR,
                "Value %d for parameter '%s' out of %s format range [%d - %d]\n",
@@ -363,6 +378,9 @@ int av_opt_set(void *obj, const char *name, const char *val, int search_flags)
                  o->type != AV_OPT_TYPE_IMAGE_SIZE && o->type != AV_OPT_TYPE_VIDEO_RATE &&
                  o->type != AV_OPT_TYPE_DURATION && o->type != AV_OPT_TYPE_COLOR &&
                  o->type != AV_OPT_TYPE_CHANNEL_LAYOUT))
+        return AVERROR(EINVAL);
+
+    if (o->flags & AV_OPT_FLAG_READONLY)
         return AVERROR(EINVAL);
 
     dst = ((uint8_t*)target_obj) + o->offset;
@@ -416,7 +434,7 @@ int av_opt_set(void *obj, const char *name, const char *val, int search_flags)
 #define OPT_EVAL_NUMBER(name, opttype, vartype)\
     int av_opt_eval_ ## name(void *obj, const AVOption *o, const char *val, vartype *name ## _out)\
     {\
-        if (!o || o->type != opttype)\
+        if (!o || o->type != opttype || o->flags & AV_OPT_FLAG_READONLY)\
             return AVERROR(EINVAL);\
         return set_string_number(obj, obj, o, val, name ## _out);\
     }
@@ -436,6 +454,9 @@ static int set_number(void *obj, const char *name, double num, int den, int64_t 
 
     if (!o || !target_obj)
         return AVERROR_OPTION_NOT_FOUND;
+
+    if (o->flags & AV_OPT_FLAG_READONLY)
+        return AVERROR(EINVAL);
 
     dst = ((uint8_t*)target_obj) + o->offset;
     return write_number(obj, o, dst, num, den, intnum);
@@ -493,7 +514,7 @@ int av_opt_set_bin(void *obj, const char *name, const uint8_t *val, int len, int
     if (!o || !target_obj)
         return AVERROR_OPTION_NOT_FOUND;
 
-    if (o->type != AV_OPT_TYPE_BINARY)
+    if (o->type != AV_OPT_TYPE_BINARY || o->flags & AV_OPT_FLAG_READONLY)
         return AVERROR(EINVAL);
 
     ptr = len ? av_malloc(len) : NULL;
@@ -921,6 +942,8 @@ static void log_value(void *av_log_obj, int level, double d)
         av_log(av_log_obj, level, "INT_MAX");
     } else if (d == INT_MIN) {
         av_log(av_log_obj, level, "INT_MIN");
+    } else if (d == UINT32_MAX) {
+        av_log(av_log_obj, level, "UINT32_MAX");
     } else if (d == (double)INT64_MAX) {
         av_log(av_log_obj, level, "I64_MAX");
     } else if (d == INT64_MIN) {
@@ -929,6 +952,18 @@ static void log_value(void *av_log_obj, int level, double d)
         av_log(av_log_obj, level, "FLT_MAX");
     } else if (d == FLT_MIN) {
         av_log(av_log_obj, level, "FLT_MIN");
+    } else if (d == -FLT_MAX) {
+        av_log(av_log_obj, level, "-FLT_MAX");
+    } else if (d == -FLT_MIN) {
+        av_log(av_log_obj, level, "-FLT_MIN");
+    } else if (d == DBL_MAX) {
+        av_log(av_log_obj, level, "DBL_MAX");
+    } else if (d == DBL_MIN) {
+        av_log(av_log_obj, level, "DBL_MIN");
+    } else if (d == -DBL_MAX) {
+        av_log(av_log_obj, level, "-DBL_MAX");
+    } else if (d == -DBL_MIN) {
+        av_log(av_log_obj, level, "-DBL_MIN");
     } else {
         av_log(av_log_obj, level, "%g", d);
     }
@@ -1019,6 +1054,8 @@ static void opt_list(void *obj, void *av_log_obj, const char *unit,
         av_log(av_log_obj, AV_LOG_INFO, "%c", (opt->flags & AV_OPT_FLAG_VIDEO_PARAM   ) ? 'V' : '.');
         av_log(av_log_obj, AV_LOG_INFO, "%c", (opt->flags & AV_OPT_FLAG_AUDIO_PARAM   ) ? 'A' : '.');
         av_log(av_log_obj, AV_LOG_INFO, "%c", (opt->flags & AV_OPT_FLAG_SUBTITLE_PARAM) ? 'S' : '.');
+        av_log(av_log_obj, AV_LOG_INFO, "%c", (opt->flags & AV_OPT_FLAG_EXPORT)         ? 'X' : '.');
+        av_log(av_log_obj, AV_LOG_INFO, "%c", (opt->flags & AV_OPT_FLAG_READONLY)       ? 'R' : '.');
 
         if (opt->help)
             av_log(av_log_obj, AV_LOG_INFO, " %s", opt->help);
@@ -1122,6 +1159,10 @@ void av_opt_set_defaults2(void *s, int mask, int flags)
         if ((opt->flags & mask) != flags)
             continue;
 #endif
+
+        if (opt->flags & AV_OPT_FLAG_READONLY)
+            continue;
+
         switch (opt->type) {
             case AV_OPT_TYPE_CONST:
                 /* Nothing to be done here */
