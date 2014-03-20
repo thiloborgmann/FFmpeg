@@ -1272,6 +1272,7 @@ EXAMPLE_LIST="
     resampling_audio_example
     scaling_video_example
     transcode_aac_example
+    transcoding_example
 "
 
 EXTERNAL_LIBRARY_LIST="
@@ -1689,6 +1690,8 @@ TOOLCHAIN_FEATURES="
     gnu_windres
     ibm_asm
     inline_asm_labels
+    inline_asm_nonlocal_labels
+    inline_asm_direct_symbol_refs
     pragma_deprecated
     rsync_contimeout
     symver_asm_label
@@ -2087,7 +2090,7 @@ sonic_ls_encoder_select="golomb"
 sp5x_decoder_select="mjpeg_decoder"
 svq1_decoder_select="hpeldsp"
 svq1_encoder_select="aandcttables dsputil hpeldsp mpegvideoenc"
-svq3_decoder_select="h264_decoder hpeldsp mpegvideo"
+svq3_decoder_select="h264_decoder hpeldsp"
 svq3_decoder_suggest="zlib"
 tak_decoder_select="dsputil"
 theora_decoder_select="vp3_decoder"
@@ -2482,6 +2485,7 @@ remuxing_example_deps="avcodec avformat avutil"
 resampling_audio_example_deps="avutil swresample"
 scaling_video_example_deps="avutil swscale"
 transcode_aac_example_deps="avcodec avformat swresample"
+transcoding_example_deps="avfilter avcodec avformat avutil"
 
 # libraries
 avcodec_deps="avutil"
@@ -3586,6 +3590,8 @@ elif enabled mips; then
 
 elif enabled ppc; then
 
+    disable ldbrx
+
     case $(tolower $cpu) in
         601|ppc601|powerpc601)
             cpuflags="-mcpu=601"
@@ -4176,6 +4182,8 @@ od -t x1 $TMPO | grep -q '42 *49 *47 *45' && enable bigendian
 
 check_inline_asm inline_asm_labels '"1:\n"'
 
+check_inline_asm inline_asm_nonlocal_labels '"Label:\n"'
+
 if enabled aarch64; then
     # internal assembler in clang 3.3 does not support this instruction
     enabled neon && check_insn neon 'ext   v0.8B, v0.8B, v1.8B, #1'
@@ -4300,6 +4308,8 @@ EOF
 
     # check whether xmm clobbers are supported
     check_inline_asm xmm_clobbers '"":::"%xmm0"'
+
+    check_inline_asm inline_asm_direct_symbol_refs '"movl test, %eax"'
 
     # check whether binutils is new enough to compile SSSE3/MMXEXT
     enabled ssse3  && check_inline_asm ssse3_inline  '"pabsw %xmm0, %xmm0"'
