@@ -127,17 +127,16 @@ av_cold void avpriv_float_dsp_init(AVFloatDSPContext *fdsp, int bit_exact)
     fdsp->butterflies_float = butterflies_float_c;
     fdsp->scalarproduct_float = avpriv_scalarproduct_float_c;
 
-#if   ARCH_AARCH64
-    ff_float_dsp_init_aarch64(fdsp);
-#elif ARCH_ARM
-    ff_float_dsp_init_arm(fdsp);
-#elif ARCH_PPC
-    ff_float_dsp_init_ppc(fdsp, bit_exact);
-#elif ARCH_X86
-    ff_float_dsp_init_x86(fdsp);
-#elif ARCH_MIPS
-    ff_float_dsp_init_mips(fdsp);
-#endif
+    if (ARCH_AARCH64)
+        ff_float_dsp_init_aarch64(fdsp);
+    if (ARCH_ARM)
+        ff_float_dsp_init_arm(fdsp);
+    if (ARCH_PPC)
+        ff_float_dsp_init_ppc(fdsp, bit_exact);
+    if (ARCH_X86)
+        ff_float_dsp_init_x86(fdsp);
+    if (ARCH_MIPS)
+        ff_float_dsp_init_mips(fdsp);
 }
 
 #ifdef TEST
@@ -221,7 +220,7 @@ static int test_vector_fmul(AVFloatDSPContext *fdsp, AVFloatDSPContext *cdsp,
     fdsp->vector_fmul(odst, v1, v2, LEN);
 
     if (ret = compare_floats(cdst, odst, LEN, FLT_EPSILON))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_fmul failed\n");
 
     return ret;
 }
@@ -241,7 +240,7 @@ static int test_vector_fmac_scalar(AVFloatDSPContext *fdsp, AVFloatDSPContext *c
     fdsp->vector_fmac_scalar(odst, src0, scale, LEN);
 
     if (ret = compare_floats(cdst, odst, LEN, ARBITRARY_FMAC_SCALAR_CONST))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_fmac_scalar failed\n");
 
     return ret;
 }
@@ -257,7 +256,7 @@ static int test_vector_fmul_scalar(AVFloatDSPContext *fdsp, AVFloatDSPContext *c
     fdsp->vector_fmul_scalar(odst, v1, scale, LEN);
 
     if (ret = compare_floats(cdst, odst, LEN, FLT_EPSILON))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_fmul_scalar failed\n");
 
     return ret;
 }
@@ -273,7 +272,7 @@ static int test_vector_dmul_scalar(AVFloatDSPContext *fdsp, AVFloatDSPContext *c
     fdsp->vector_dmul_scalar(odst, v1, scale, LEN);
 
     if (ret = compare_doubles(cdst, odst, LEN, DBL_EPSILON))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_dmul_scalar failed\n");
 
     return ret;
 }
@@ -290,7 +289,7 @@ static int test_vector_fmul_window(AVFloatDSPContext *fdsp, AVFloatDSPContext *c
     fdsp->vector_fmul_window(odst, v1, v2, v3, LEN / 2);
 
     if (ret = compare_floats(cdst, odst, LEN, ARBITRARY_FMUL_WINDOW_CONST))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_fmul_window failed\n");
 
     return ret;
 }
@@ -307,7 +306,7 @@ static int test_vector_fmul_add(AVFloatDSPContext *fdsp, AVFloatDSPContext *cdsp
     fdsp->vector_fmul_add(odst, v1, v2, v3, LEN);
 
     if (ret = compare_floats(cdst, odst, LEN, ARBITRARY_FMUL_ADD_CONST))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_fmul_add failed\n");
 
     return ret;
 }
@@ -323,7 +322,7 @@ static int test_vector_fmul_reverse(AVFloatDSPContext *fdsp, AVFloatDSPContext *
     fdsp->vector_fmul_reverse(odst, v1, v2, LEN);
 
     if (ret = compare_floats(cdst, odst, LEN, FLT_EPSILON))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "vector_fmul_reverse failed\n");
 
     return ret;
 }
@@ -347,7 +346,7 @@ static int test_butterflies_float(AVFloatDSPContext *fdsp, AVFloatDSPContext *cd
 
     if ((ret = compare_floats(cv1, ov1, LEN, FLT_EPSILON)) ||
         (ret = compare_floats(cv2, ov2, LEN, FLT_EPSILON)))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "butterflies_float failed\n");
 
     return ret;
 }
@@ -363,7 +362,7 @@ static int test_scalarproduct_float(AVFloatDSPContext *fdsp, AVFloatDSPContext *
     oprod = fdsp->scalarproduct_float(v1, v2, LEN);
 
     if (ret = compare_floats(&cprod, &oprod, 1, ARBITRARY_SCALARPRODUCT_CONST))
-        av_log(NULL, AV_LOG_ERROR, "%s failed\n", __func__);
+        av_log(NULL, AV_LOG_ERROR, "scalarproduct_float failed\n");
 
     return ret;
 }

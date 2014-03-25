@@ -27,6 +27,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/x86/asm.h"
 #include "libavutil/x86/cpu.h"
+#include "libavcodec/mpegvideo.h"
 #include "dsputil_x86.h"
 
 #if HAVE_INLINE_ASM
@@ -94,7 +95,8 @@ static inline void sad8_1_mmxext(uint8_t *blk1, uint8_t *blk2,
         : "r" ((x86_reg) stride));
 }
 
-static int sad16_sse2(void *v, uint8_t *blk2, uint8_t *blk1, int stride, int h)
+static int sad16_sse2(MpegEncContext *v, uint8_t *blk2, uint8_t *blk1,
+                      int stride, int h)
 {
     int ret;
     __asm__ volatile (
@@ -262,7 +264,7 @@ static inline void sad8_4_mmx(uint8_t *blk1, uint8_t *blk2, int stride, int h)
         "punpckhbw %%mm7, %%mm5         \n\t"
         "paddw %%mm4, %%mm2             \n\t"
         "paddw %%mm5, %%mm3             \n\t"
-        "movq 16+"MANGLE(round_tab)", %%mm5 \n\t"
+        "movq %5, %%mm5                 \n\t"
         "paddw %%mm2, %%mm0             \n\t"
         "paddw %%mm3, %%mm1             \n\t"
         "paddw %%mm5, %%mm0             \n\t"
@@ -286,8 +288,7 @@ static inline void sad8_4_mmx(uint8_t *blk1, uint8_t *blk2, int stride, int h)
         " js 1b                         \n\t"
         : "+a" (len)
         : "r" (blk1 - len), "r" (blk1 - len + stride), "r" (blk2 - len),
-          "r" ((x86_reg) stride)
-          NAMED_CONSTRAINTS_ADD(round_tab));
+          "r" ((x86_reg) stride), "m" (round_tab[2]));
 }
 
 static inline int sum_mmx(void)
@@ -325,7 +326,7 @@ static inline void sad8_y2a_mmx(uint8_t *blk1, uint8_t *blk2, int stride, int h)
 }
 
 #define PIX_SAD(suf)                                                    \
-static int sad8_ ## suf(void *v, uint8_t *blk2,                         \
+static int sad8_ ## suf(MpegEncContext *v, uint8_t *blk2,               \
                         uint8_t *blk1, int stride, int h)               \
 {                                                                       \
     av_assert2(h == 8);                                                     \
@@ -339,7 +340,7 @@ static int sad8_ ## suf(void *v, uint8_t *blk2,                         \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad8_x2_ ## suf(void *v, uint8_t *blk2,                      \
+static int sad8_x2_ ## suf(MpegEncContext *v, uint8_t *blk2,            \
                            uint8_t *blk1, int stride, int h)            \
 {                                                                       \
     av_assert2(h == 8);                                                     \
@@ -354,7 +355,7 @@ static int sad8_x2_ ## suf(void *v, uint8_t *blk2,                      \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad8_y2_ ## suf(void *v, uint8_t *blk2,                      \
+static int sad8_y2_ ## suf(MpegEncContext *v, uint8_t *blk2,            \
                            uint8_t *blk1, int stride, int h)            \
 {                                                                       \
     av_assert2(h == 8);                                                     \
@@ -369,7 +370,7 @@ static int sad8_y2_ ## suf(void *v, uint8_t *blk2,                      \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad8_xy2_ ## suf(void *v, uint8_t *blk2,                     \
+static int sad8_xy2_ ## suf(MpegEncContext *v, uint8_t *blk2,           \
                             uint8_t *blk1, int stride, int h)           \
 {                                                                       \
     av_assert2(h == 8);                                                     \
@@ -383,7 +384,7 @@ static int sad8_xy2_ ## suf(void *v, uint8_t *blk2,                     \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad16_ ## suf(void *v, uint8_t *blk2,                        \
+static int sad16_ ## suf(MpegEncContext *v, uint8_t *blk2,              \
                          uint8_t *blk1, int stride, int h)              \
 {                                                                       \
     __asm__ volatile (                                                  \
@@ -397,7 +398,7 @@ static int sad16_ ## suf(void *v, uint8_t *blk2,                        \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad16_x2_ ## suf(void *v, uint8_t *blk2,                     \
+static int sad16_x2_ ## suf(MpegEncContext *v, uint8_t *blk2,           \
                             uint8_t *blk1, int stride, int h)           \
 {                                                                       \
     __asm__ volatile (                                                  \
@@ -412,7 +413,7 @@ static int sad16_x2_ ## suf(void *v, uint8_t *blk2,                     \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad16_y2_ ## suf(void *v, uint8_t *blk2,                     \
+static int sad16_y2_ ## suf(MpegEncContext *v, uint8_t *blk2,           \
                             uint8_t *blk1, int stride, int h)           \
 {                                                                       \
     __asm__ volatile (                                                  \
@@ -427,7 +428,7 @@ static int sad16_y2_ ## suf(void *v, uint8_t *blk2,                     \
     return sum_ ## suf();                                               \
 }                                                                       \
                                                                         \
-static int sad16_xy2_ ## suf(void *v, uint8_t *blk2,                    \
+static int sad16_xy2_ ## suf(MpegEncContext *v, uint8_t *blk2,          \
                              uint8_t *blk1, int stride, int h)          \
 {                                                                       \
     __asm__ volatile (                                                  \

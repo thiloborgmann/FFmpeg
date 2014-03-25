@@ -1,10 +1,12 @@
 Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
-version <next>
+version <next>:
 - shuffleplanes filter
 - subfile protocol
 - Phantom Cine demuxer
+- replaygain data export
+- VP7 video decoder
 
 
 version 2.2:
@@ -34,6 +36,7 @@ version 2.2:
 - Support DNx444
 - libx265 encoder
 - dejudder filter
+- Autodetect VDA like all other hardware accelerations
 
 
 version 2.1:
