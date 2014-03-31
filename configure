@@ -2360,6 +2360,8 @@ oss_indev_deps_any="soundcard_h sys_soundcard_h"
 oss_outdev_deps_any="soundcard_h sys_soundcard_h"
 pulse_indev_deps="libpulse"
 pulse_outdev_deps="libpulse"
+qtkit_indev_extralibs="-framework QTKit -framework Foundation -framework QuartzCore"
+qtkit_indev_select="qtkit"
 sdl_outdev_deps="sdl"
 sndio_indev_deps="sndio_h"
 sndio_outdev_deps="sndio_h"
@@ -4614,8 +4616,8 @@ enabled libx264           && require libx264 x264.h x264_encoder_encode -lx264 &
                              { check_cpp_condition x264.h "X264_BUILD >= 118" ||
                                die "ERROR: libx264 must be installed and version must be >= 0.118."; }
 enabled libx265           && require_pkg_config x265 x265.h x265_encoder_encode &&
-                             { check_cpp_condition x265.h "X265_BUILD >= 9" ||
-                               die "ERROR: libx265 version must be >= 9."; }
+                             { check_cpp_condition x265.h "X265_BUILD >= 13" ||
+                               die "ERROR: libx265 version must be >= 13."; }
 enabled libxavs           && require libxavs xavs.h xavs_encoder_encode -lxavs
 enabled libxvid           && require libxvid xvid.h xvid_global -lxvidcore
 enabled libzmq            && require_pkg_config libzmq zmq.h zmq_ctx_new
@@ -4643,6 +4645,7 @@ enabled openssl           && { check_lib openssl/ssl.h SSL_library_init -lssl -l
                                check_lib openssl/ssl.h SSL_library_init -lssl32 -leay32 ||
                                check_lib openssl/ssl.h SSL_library_init -lssl -lcrypto -lws2_32 -lgdi32 ||
                                die "ERROR: openssl not found"; }
+enabled qtkit_indev      && { check_header QTKit/QTKit.h || disable qtkit_indev; }
 
 if enabled gnutls; then
     { check_lib nettle/bignum.h nettle_mpz_get_str_256 -lnettle -lhogweed -lgmp && enable nettle; } ||
