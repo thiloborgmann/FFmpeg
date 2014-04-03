@@ -1523,7 +1523,7 @@ static int mov_rewrite_dvd_sub_extradata(AVStream *st)
         uint32_t yuv = AV_RB32(src + i * 4);
         uint32_t rgba = yuv_to_rgba(yuv);
 
-        av_strlcatf(buf, sizeof(buf), "%06x%s", rgba, i != 15 ? ", " : "");
+        av_strlcatf(buf, sizeof(buf), "%06"PRIx32"%s", rgba, i != 15 ? ", " : "");
     }
 
     if (av_strlcat(buf, "\n", sizeof(buf)) >= sizeof(buf))
@@ -3709,6 +3709,7 @@ AVInputFormat ff_mov_demuxer = {
     .name           = "mov,mp4,m4a,3gp,3g2,mj2",
     .long_name      = NULL_IF_CONFIG_SMALL("QuickTime / MOV"),
     .priv_data_size = sizeof(MOVContext),
+    .extensions     = "mov,mp4,m4a,3gp,3g2,mj2",
     .read_probe     = mov_probe,
     .read_header    = mov_read_header,
     .read_packet    = mov_read_packet,

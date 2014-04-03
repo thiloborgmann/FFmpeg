@@ -820,7 +820,7 @@ following image formats are supported:
     @tab encoding supported through external library libaacplus
 @item AAC                    @tab  E  @tab  X
     @tab encoding supported through external library libfaac and libvo-aacenc
-@item AC-3                   @tab IX  @tab  X
+@item AC-3                   @tab IX  @tab  IX
 @item ADPCM 4X Movie         @tab     @tab  X
 @item ADPCM CDROM XA         @tab     @tab  X
 @item ADPCM Creative Technology @tab     @tab  X
@@ -1088,6 +1088,7 @@ performance on systems without hardware floating point support).
 @item Video4Linux2      @tab X      @tab X
 @item VfW capture       @tab X      @tab
 @item X11 grabbing      @tab X      @tab
+@item Win32 grabbing    @tab X      @tab
 @end multitable
 
 @code{X} means that input/output is supported.
