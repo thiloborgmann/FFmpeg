@@ -798,6 +798,13 @@ check_cxx(){
     check_cmd $cxx $CPPFLAGS $CFLAGS $CXXFLAGS "$@" $CXX_C -o $TMPO $TMPCPP
 }
 
+check_oc(){
+    log check_oc "$@"
+    cat > $TMPM
+    log_file $TMPM
+    check_cmd $cc $CPPFLAGS $CFLAGS "$@" $CC_C $(cc_o $TMPO) $TMPM
+}
+
 check_cpp(){
     log check_cpp "$@"
     cat > $TMPC
@@ -941,6 +948,17 @@ check_header(){
 #include <$header>
 int x;
 EOF
+}
+
+check_header_oc(){
+    log check_header_oc "$@"
+    header=$1
+    shift
+    disable_safe $header
+    {
+       echo "#include <$header>"
+       echo "int main(void) { return 0; }"
+    } | check_oc "$@" && enable_safe $headers
 }
 
 check_func(){
@@ -2966,6 +2984,7 @@ tmpfile TMPC   .c
 tmpfile TMPCPP .cpp
 tmpfile TMPE   $EXESUF
 tmpfile TMPH   .h
+tmpfile TMPM   .m
 tmpfile TMPO   .o
 tmpfile TMPS   .S
 tmpfile TMPSH  .sh
@@ -4649,7 +4668,7 @@ enabled openssl           && { check_lib openssl/ssl.h SSL_library_init -lssl -l
                                check_lib openssl/ssl.h SSL_library_init -lssl32 -leay32 ||
                                check_lib openssl/ssl.h SSL_library_init -lssl -lcrypto -lws2_32 -lgdi32 ||
                                die "ERROR: openssl not found"; }
-enabled qtkit_indev      && { check_header QTKit/QTKit.h || disable qtkit_indev; }
+enabled qtkit_indev      && { check_header_oc QTKit/QTKit.h || disable qtkit_indev; }
 
 if enabled gnutls; then
     { check_lib nettle/bignum.h nettle_mpz_get_str_256 -lnettle -lhogweed -lgmp && enable nettle; } ||
@@ -4776,6 +4795,7 @@ check_cflags -Wundef
 check_cflags -Wmissing-prototypes
 check_cflags -Wno-pointer-to-int-cast
 check_cflags -Wstrict-prototypes
+check_cflags -Wempty-body
 enabled extra_warnings && check_cflags -Winline
 
 check_disable_warning(){

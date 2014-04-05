@@ -74,8 +74,7 @@ static int set_metadata_int(AVDictionary **dict, const char *key, int value)
 {
     if (value) {
         char buf[64];
-        snprintf(buf, sizeof(buf - 1), "%i", value);
-        buf[sizeof(buf) - 1] = 0;
+        snprintf(buf, sizeof(buf), "%i", value);
         return av_dict_set(dict, key, buf, 0);
     }
     return 0;
