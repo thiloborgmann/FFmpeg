@@ -16,13 +16,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/cpu.h"
-#include "libavutil/cpu_internal.h"
-#include "config.h"
+#include "libavutil/aarch64/cpu.h"
+#include "libavcodec/videodsp.h"
 
-int ff_get_cpu_flags_aarch64(void)
+void ff_prefetch_aarch64(uint8_t *mem, ptrdiff_t stride, int h);
+
+av_cold void ff_videodsp_init_aarch64(VideoDSPContext *ctx, int bpc)
 {
-    return AV_CPU_FLAG_ARMV8 * HAVE_ARMV8 |
-           AV_CPU_FLAG_NEON  * HAVE_NEON  |
-           AV_CPU_FLAG_VFP   * HAVE_VFP;
+    int cpu_flags = av_get_cpu_flags();
+
+    if (have_armv8(cpu_flags))
+        ctx->prefetch = ff_prefetch_aarch64;
 }

@@ -16,13 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/cpu.h"
-#include "libavutil/cpu_internal.h"
-#include "config.h"
+#include "libavutil/aarch64/asm.S"
 
-int ff_get_cpu_flags_aarch64(void)
-{
-    return AV_CPU_FLAG_ARMV8 * HAVE_ARMV8 |
-           AV_CPU_FLAG_NEON  * HAVE_NEON  |
-           AV_CPU_FLAG_VFP   * HAVE_VFP;
-}
+function ff_prefetch_aarch64, export=1
+        subs            w2,  w2,  #2
+        prfm            pldl1strm, [x0]
+        prfm            pldl1strm, [x0,  x1]
+        add             x0,  x0,  x1,  lsl #1
+        b.gt            X(ff_prefetch_aarch64)
+        ret
+endfunc
