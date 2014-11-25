@@ -269,6 +269,26 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
     NSError *error  = nil;
     AVCaptureInput* capture_input = nil;
 
+    // select frame rate
+    float fps = 1.88;
+    if ([video_device lockForConfiguration:nil]) {
+        @try {
+            [video_device setActiveVideoMinFrameDuration:CMTimeMake(100, 100*fps)];
+            [video_device setActiveVideoMaxFrameDuration:CMTimeMake(100, 100*fps)];
+        }
+        @catch (NSException *error) {
+            av_log(s, AV_LOG_ERROR, "Selected frame rate (%f) is not supported by AVFoundation.\n", fps);
+            av_log(s, AV_LOG_ERROR, "Supported frame rates:\n");
+            AVCaptureDeviceFormat *format = [video_device activeFormat];
+            for (AVFrameRateRange *range in [format videoSupportedFrameRateRanges]) {
+                av_log(s, AV_LOG_ERROR, "  %2.2f\n", range.maxFrameRate);
+            }
+        }
+        [video_device unlockForConfiguration];
+    } else {
+        av_log(s, AV_LOG_WARNING, "Failed to set framerate\n");
+    }
+
     if (ctx->video_device_index < ctx->num_video_devices) {
         capture_input = (AVCaptureInput*) [[[AVCaptureDeviceInput alloc] initWithDevice:video_device error:&error] autorelease];
     } else {
