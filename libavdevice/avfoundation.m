@@ -112,6 +112,7 @@ typedef struct
     int32_t         *audio_buffer;
     int             audio_buffer_size;
 
+    float           frame_rate;
     enum AVPixelFormat pixel_format;
 
     AVCaptureSession         *capture_session;
@@ -270,7 +271,7 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
     AVCaptureInput* capture_input = nil;
 
     // select frame rate
-    float fps = 1.88;
+    float fps = ctx->frame_rate;;
     if ([video_device lockForConfiguration:nil]) {
         @try {
             [video_device setActiveVideoMinFrameDuration:CMTimeMake(100, 100*fps)];
@@ -852,6 +853,7 @@ static const AVOption options[] = {
     { "video_device_index", "select video device by index for devices with same name (starts at 0)", offsetof(AVFContext, video_device_index), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
     { "audio_device_index", "select audio device by index for devices with same name (starts at 0)", offsetof(AVFContext, audio_device_index), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
     { "pixel_format", "set pixel format", offsetof(AVFContext, pixel_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_YUV420P}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM},
+    { "framerate", "set frame rate", offsetof(AVFContext, frame_rate), AV_OPT_TYPE_FLOAT, {.dbl = 30.0}, 0.1, 60.0, AV_OPT_TYPE_VIDEO_RATE, NULL },
     { NULL },
 };
 
