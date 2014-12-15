@@ -270,26 +270,6 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
     NSError *error  = nil;
     AVCaptureInput* capture_input = nil;
 
-    // select frame rate
-    float fps = ctx->frame_rate;;
-    if ([video_device lockForConfiguration:nil]) {
-        @try {
-            [video_device setActiveVideoMinFrameDuration:CMTimeMake(100, 100*fps)];
-            [video_device setActiveVideoMaxFrameDuration:CMTimeMake(100, 100*fps)];
-        }
-        @catch (NSException *error) {
-            av_log(s, AV_LOG_ERROR, "Selected frame rate (%f) is not supported by AVFoundation.\n", fps);
-            av_log(s, AV_LOG_ERROR, "Supported frame rates:\n");
-            AVCaptureDeviceFormat *format = [video_device activeFormat];
-            for (AVFrameRateRange *range in [format videoSupportedFrameRateRanges]) {
-                av_log(s, AV_LOG_ERROR, "  %2.2f\n", range.maxFrameRate);
-            }
-        }
-        [video_device unlockForConfiguration];
-    } else {
-        av_log(s, AV_LOG_WARNING, "Failed to set framerate\n");
-    }
-
     if (ctx->video_device_index < ctx->num_video_devices) {
         capture_input = (AVCaptureInput*) [[[AVCaptureDeviceInput alloc] initWithDevice:video_device error:&error] autorelease];
     } else {
@@ -392,6 +372,42 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
         av_log(s, AV_LOG_ERROR, "can't add video output to capture session\n");
         return 1;
     }
+
+    // select frame rate
+    int _i = 0;
+    for (AVCaptureConnection *connection in [ctx->video_output connections]) {
+        av_log(s, AV_LOG_WARNING, "fps %f\n", ctx->frame_rate);
+        av_log(s, AV_LOG_WARNING, "connection #%i\n", _i++);
+        av_log(s, AV_LOG_WARNING, "supports min duration: %i\n", (int)connection.supportsVideoMinFrameDuration);
+        av_log(s, AV_LOG_WARNING, "supports max duration: %i\n", (int)connection.supportsVideoMaxFrameDuration);
+        if (connection.supportsVideoMinFrameDuration && connection.supportsVideoMaxFrameDuration) {
+            float fps = ctx->frame_rate;;
+            connection.videoMinFrameDuration = CMTimeMake(100, 100*fps);
+            connection.videoMaxFrameDuration = CMTimeMake(100, 100*fps);
+        }
+    }
+/*
+    float fps = ctx->frame_rate;;
+    if ([video_device lockForConfiguration:nil]) {
+        @try {
+            [video_device setActiveVideoMinFrameDuration:CMTimeMake(100, 100*fps)];
+            [video_device setActiveVideoMaxFrameDuration:CMTimeMake(100, 100*fps)];
+        }
+        @catch (NSException *error) {
+            av_log(s, AV_LOG_ERROR, "Selected frame rate (%f) is not supported by AVFoundation.\n", fps);
+            av_log(s, AV_LOG_ERROR, "Supported frame rates:\n");
+            AVCaptureDeviceFormat *format = [video_device activeFormat];
+            for (AVFrameRateRange *range in [format videoSupportedFrameRateRanges]) {
+                av_log(s, AV_LOG_ERROR, "  %2.2f\n", range.maxFrameRate);
+            }
+        }
+        [video_device unlockForConfiguration];
+    } else {
+        av_log(s, AV_LOG_WARNING, "Failed to set framerate\n");
+    }
+*/
+
+
 
     return 0;
 }
