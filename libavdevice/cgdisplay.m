@@ -82,6 +82,14 @@ static const struct CGDPixelFormatSpec cgd_pixel_formats[] = {
 typedef struct
 {
     AVClass*        class;
+
+    CGDirectDisplayID display_id;
+    CGDisplayStreamRef display_stream;
+    dispatch_queue_t display_queue;
+
+
+    int             frames_captured;
+    int             video_stream_index;
 /*
     int             frames_captured;
     int             audio_frames_captured;
@@ -659,10 +667,20 @@ static int get_audio_config(AVFormatContext *s)
     return 0;
 }
 */
+
+void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef);
+void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef)
+{
+    av_log(NULL, AV_LOG_INFO, "frame_receiver called!\n");
+}
+
 static int cgd_read_header(AVFormatContext *s)
 {
     CGDContext *ctx         = (CGDContext*)s->priv_data;
+    ctx->frames_captured    = 1;
     uint32_t num_screens    = 0;
+
+    CGDirectDisplayID display_id = 0;
 
     CGGetActiveDisplayList(0, NULL, &num_screens);
 
@@ -673,13 +691,52 @@ static int cgd_read_header(AVFormatContext *s)
         for (int i = 0; i < num_screens; i++) {
             av_log(ctx, AV_LOG_INFO, "[%d] Capture screen %d\n", index + i, i);
         }
+        // always take display 0 right now...
+        display_id = screens[0];
     } else {
         av_log(ctx, AV_LOG_ERROR, "No displays found!\n");
         return AVERROR(EIO);
     }
 
+    ///////////////////////////////////////////////////////////////////////////
+    // fake stream info generation: BEGIN
+    AVStream* stream = avformat_new_stream(s, NULL);
+
+    if (!stream) {
+        return 1;
+    }
+
+    ctx->video_stream_index = stream->index;
+
+    avpriv_set_pts_info(stream, 64, 1, cgd_time_base);
+
+    // fake 100x100x3x8bit frames
+    int32_t image_buffer_size = (100 * 100) * (3 * 1);
+
+    stream->codec->codec_id   = AV_CODEC_ID_RAWVIDEO;
+    stream->codec->codec_type = AVMEDIA_TYPE_VIDEO;
+    stream->codec->width      = (int)100;
+    stream->codec->height     = (int)100;
+    stream->codec->pix_fmt    = AV_PIX_FMT_RGB24;
+    // fake stream info generation: END
+    ///////////////////////////////////////////////////////////////////////////
 
 
+    ctx->display_queue  = dispatch_queue_create("ffqueue", DISPATCH_QUEUE_SERIAL);
+    ctx->display_stream = nil;
+
+    CGDisplayStreamFrameAvailableHandler streamHandler_;
+    streamHandler_ = ^(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef) {
+        frame_receiver(status, displayTime, frameSurface, updateRef);
+    };
+
+    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, 3840, 1024, 'BGRA', nil, ctx->display_queue, streamHandler_);
+    if (ctx->display_stream == nil) {
+        av_log(ctx, AV_LOG_ERROR, "invalid display stream\n");
+    }
+
+
+    CGDisplayStreamStart(ctx->display_stream);
 
 /* old funtion:
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -915,6 +972,35 @@ return 0;
 
 static int cgd_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
+    CGDContext* ctx = (CGDContext*)s->priv_data;
+
+    // simulate 100x100 pixel output
+    int32_t image_buffer_size = (100 * 100) * (3 * 1);
+    if (av_new_packet(pkt, (int)(image_buffer_size)) < 0) {
+        return AVERROR(EIO);
+    }
+
+    // fake dts/pts
+    AVRational cgd_time_base_q = {
+        .num = ctx->frames_captured++,
+        .den = cgd_time_base
+    };
+//    pkt->pts = pkt->dts = ctx->frames_captured++;
+
+    AVRational timebase_q = av_make_q(1, cgd_time_base);
+    pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, cgd_time_base_q, cgd_time_base_q);
+
+    // fake more data in packet
+    pkt->stream_index  = ctx->video_stream_index;
+    pkt->flags        |= AV_PKT_FLAG_KEY;
+
+    for (int y = 0; y < 100; y++) {
+        for (int x = 0; x < 100; x++) {
+            pkt->data[y * 300 + x * 3 + 0] = 64; // R
+            pkt->data[y * 300 + x * 3 + 1] = ctx->frames_captured % 255; // G
+            pkt->data[y * 300 + x * 3 + 2] = 64; // B
+        }
+    }
 /*
     AVFContext* ctx = (AVFContext*)s->priv_data;
 
@@ -1032,7 +1118,15 @@ static int cgd_read_packet(AVFormatContext *s, AVPacket *pkt)
 static int cgd_close(AVFormatContext *s)
 {
     CGDContext* ctx = (CGDContext*)s->priv_data;
+
+    // stop display streaming
+    CGDisplayStreamStop(ctx->display_stream);
+
+    // close display dispatch queue
+    dispatch_release(ctx->display_queue);
+
     destroy_context(ctx);
+
     return 0;
 }
 
