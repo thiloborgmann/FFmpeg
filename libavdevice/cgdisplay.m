@@ -90,6 +90,9 @@ typedef struct
 
     int             frames_captured;
     int             video_stream_index;
+    pthread_mutex_t frame_lock;
+    pthread_cond_t  frame_wait_cond;
+    int             frame_ready;
 /*
     int             frames_captured;
     int             audio_frames_captured;
@@ -137,17 +140,19 @@ typedef struct
     CMSampleBufferRef         current_audio_frame;
 */
 } CGDContext;
-/*
-static void lock_frames(AVFContext* ctx)
+
+static CGDContext *ctx_p = nil;
+
+static void lock_frames(CGDContext* ctx)
 {
     pthread_mutex_lock(&ctx->frame_lock);
 }
 
-static void unlock_frames(AVFContext* ctx)
+static void unlock_frames(CGDContext* ctx)
 {
     pthread_mutex_unlock(&ctx->frame_lock);
 }
-
+/*
 @interface AVFFrameReceiver : NSObject
 {
     AVFContext* _context;
@@ -238,6 +243,8 @@ static void unlock_frames(AVFContext* ctx)
 */
 static void destroy_context(CGDContext* ctx)
 {
+    pthread_mutex_destroy(&ctx->frame_lock);
+    pthread_cond_destroy(&ctx->frame_wait_cond);
 /*    [ctx->capture_session stopRunning];
 
     [ctx->capture_session release];
@@ -671,13 +678,27 @@ static int get_audio_config(AVFormatContext *s)
 void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef);
 void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef)
 {
-    av_log(NULL, AV_LOG_INFO, "frame_receiver called!\n");
+    av_log(ctx_p, AV_LOG_INFO, "frame_receiver called!\n");
+av_log(ctx_p, AV_LOG_INFO, "ctx_p = %10X\n", (int)(ctx_p));
+
+    lock_frames(ctx_p);
+
+    ctx_p->frame_ready = 1;
+    av_log(ctx_p, AV_LOG_INFO, "frame_ready = %i\n", ctx_p->frame_ready);
+
+    pthread_cond_signal(&ctx_p->frame_wait_cond);
+
+    unlock_frames(ctx_p);
+
 }
 
 static int cgd_read_header(AVFormatContext *s)
 {
     CGDContext *ctx         = (CGDContext*)s->priv_data;
-    ctx->frames_captured    = 1;
+    ctx_p = ctx;
+av_log(ctx_p, AV_LOG_INFO, "init: ctx_p = %10X\n", (int)(ctx_p));
+    ctx->frames_captured    = 0;
+    ctx->frame_ready        = 0;
     uint32_t num_screens    = 0;
 
     CGDirectDisplayID display_id = 0;
@@ -721,6 +742,8 @@ static int cgd_read_header(AVFormatContext *s)
     // fake stream info generation: END
     ///////////////////////////////////////////////////////////////////////////
 
+    pthread_mutex_init(&ctx->frame_lock, NULL);
+    pthread_cond_init(&ctx->frame_wait_cond, NULL);
 
     ctx->display_queue  = dispatch_queue_create("ffqueue", DISPATCH_QUEUE_SERIAL);
     ctx->display_stream = nil;
@@ -974,33 +997,45 @@ static int cgd_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     CGDContext* ctx = (CGDContext*)s->priv_data;
 
-    // simulate 100x100 pixel output
-    int32_t image_buffer_size = (100 * 100) * (3 * 1);
-    if (av_new_packet(pkt, (int)(image_buffer_size)) < 0) {
-        return AVERROR(EIO);
-    }
-
-    // fake dts/pts
-    AVRational cgd_time_base_q = {
-        .num = ctx->frames_captured++,
-        .den = cgd_time_base
-    };
-//    pkt->pts = pkt->dts = ctx->frames_captured++;
-
-    AVRational timebase_q = av_make_q(1, cgd_time_base);
-    pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, cgd_time_base_q, cgd_time_base_q);
-
-    // fake more data in packet
-    pkt->stream_index  = ctx->video_stream_index;
-    pkt->flags        |= AV_PKT_FLAG_KEY;
-
-    for (int y = 0; y < 100; y++) {
-        for (int x = 0; x < 100; x++) {
-            pkt->data[y * 300 + x * 3 + 0] = 64; // R
-            pkt->data[y * 300 + x * 3 + 1] = ctx->frames_captured % 255; // G
-            pkt->data[y * 300 + x * 3 + 2] = 64; // B
+    lock_frames(ctx);
+do {
+    if (ctx->frame_ready) {
+        ctx->frame_ready = 0;
+//    if (1) {
+        // simulate 100x100 pixel output
+        int32_t image_buffer_size = (100 * 100) * (3 * 1);
+        if (av_new_packet(pkt, (int)(image_buffer_size)) < 0) {
+            return AVERROR(EIO);
         }
+
+        // fake dts/pts
+        AVRational cgd_time_base_q = {
+            .num = 1,
+            .den = cgd_time_base
+        };
+    //    pkt->pts = pkt->dts = ctx->frames_captured++;
+
+        AVRational timebase_q = av_make_q(1, cgd_time_base);
+        pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, cgd_time_base_q, cgd_time_base_q);
+
+        // fake more data in packet
+        pkt->stream_index  = ctx->video_stream_index;
+        pkt->flags        |= AV_PKT_FLAG_KEY;
+
+        for (int y = 0; y < 100; y++) {
+            for (int x = 0; x < 100; x++) {
+                pkt->data[y * 300 + x * 3 + 0] = 64; // R
+                pkt->data[y * 300 + x * 3 + 1] = ctx->frames_captured % 255; // G
+                pkt->data[y * 300 + x * 3 + 2] = 64; // B
+            }
+        }
+
+    } else {
+        pkt->data = NULL;
+        pthread_cond_wait(&ctx->frame_wait_cond, &ctx->frame_lock);
     }
+} while (pkt->data == NULL);
+    unlock_frames(ctx);
 /*
     AVFContext* ctx = (AVFContext*)s->priv_data;
 
