@@ -26,6 +26,7 @@
  */
 
 #import <CoreGraphics/CoreGraphics.h>
+#import <Foundation/Foundation.h>
 #include <pthread.h>
 
 #include "libavutil/pixdesc.h"
@@ -36,6 +37,8 @@
 #include "libavutil/parseutils.h"
 #include "libavutil/time.h"
 #include "avdevice.h"
+
+#define FRAME_QUEUE_SIZE 8
 
 static const int cgd_time_base = 1000000;
 
@@ -87,12 +90,16 @@ typedef struct
     CGDisplayStreamRef display_stream;
     dispatch_queue_t display_queue;
 
-
     int             frames_captured;
     int             video_stream_index;
     pthread_mutex_t frame_lock;
     pthread_cond_t  frame_wait_cond;
     int             frame_ready;
+    int             frame_width;
+    int             frame_height;
+    NSMutableArray  *frame_queue;
+    NSMutableArray  *pts_queue;
+
 /*
     int             frames_captured;
     int             audio_frames_captured;
@@ -675,17 +682,52 @@ static int get_audio_config(AVFormatContext *s)
 }
 */
 
-void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef);
-void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef)
+//void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef);
+static void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTime, IOSurfaceRef frameSurface, CGDisplayStreamUpdateRef updateRef)
 {
-    av_log(ctx_p, AV_LOG_INFO, "frame_receiver called!\n");
-av_log(ctx_p, AV_LOG_INFO, "ctx_p = %10X\n", (int)(ctx_p));
+    // might cause a crash if StatusStopped comes in and is treated as a usual plane
+    switch(status) {
+        case kCGDisplayStreamFrameStatusFrameComplete:
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameComplete\n");
+            break;
+        case kCGDisplayStreamFrameStatusFrameIdle:
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameIdle\n");
+            break;
+        case kCGDisplayStreamFrameStatusFrameBlank:
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameBlank\n");
+            break;
+        case kCGDisplayStreamFrameStatusStopped:
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusStopped\n");
+            return;
+            break;
+    }
+
+    NSMutableArray *frame_queue = ctx_p->frame_queue;
+    NSMutableArray *pts_queue   = ctx_p->pts_queue;
 
     lock_frames(ctx_p);
 
-    ctx_p->frame_ready = 1;
-    av_log(ctx_p, AV_LOG_INFO, "frame_ready = %i\n", ctx_p->frame_ready);
+    CFRetain(frameSurface);
+    IOSurfaceIncrementUseCount(frameSurface);
 
+    if ([frame_queue count] == FRAME_QUEUE_SIZE) {
+        av_log(ctx_p, AV_LOG_WARNING, "Video queue is full. Frame dropped!\n");
+        [frame_queue removeLastObject];
+        [pts_queue   removeLastObject];
+    }
+
+    NSNumber *num = (NSNumber*)[NSNumber numberWithUnsignedLongLong:displayTime];
+
+    [frame_queue insertObject:(id)frameSurface atIndex:0];
+    [pts_queue   insertObject:num atIndex:0];
+    //[pts_queue   insertObject:(id)[NSNumber numberWithUnsignedLongLong:displayTime] atIndex:0];
+    av_log(ctx_p, AV_LOG_INFO, "%lu - display time: %llu\n", [pts_queue count], displayTime);
+
+
+//    NSNumber *num = [NSNumber numberWithUnsignedLongLong:displayTime];
+//    av_log(ctx_p, AV_LOG_INFO, "number = %llu\n", num.unsignedLongLongValue);
+
+    ctx_p->frame_ready = 1;
     pthread_cond_signal(&ctx_p->frame_wait_cond);
 
     unlock_frames(ctx_p);
@@ -696,10 +738,13 @@ static int cgd_read_header(AVFormatContext *s)
 {
     CGDContext *ctx         = (CGDContext*)s->priv_data;
     ctx_p = ctx;
-av_log(ctx_p, AV_LOG_INFO, "init: ctx_p = %10X\n", (int)(ctx_p));
+
     ctx->frames_captured    = 0;
     ctx->frame_ready        = 0;
     uint32_t num_screens    = 0;
+
+    ctx->frame_queue = [[NSMutableArray alloc] initWithCapacity:FRAME_QUEUE_SIZE];
+
 
     CGDirectDisplayID display_id = 0;
 
@@ -710,10 +755,16 @@ av_log(ctx_p, AV_LOG_INFO, "init: ctx_p = %10X\n", (int)(ctx_p));
         CGDirectDisplayID screens[num_screens];
         CGGetActiveDisplayList(num_screens, screens, &num_screens);
         for (int i = 0; i < num_screens; i++) {
-            av_log(ctx, AV_LOG_INFO, "[%d] Capture screen %d\n", index + i, i);
+            av_log(ctx, AV_LOG_INFO, "[%d] Capture screen %d (%zux%zu)\n",
+                   index + i,
+                   i,
+                   CGDisplayPixelsWide(screens[i]),
+                   CGDisplayPixelsHigh(screens[i]));
         }
         // always take display 0 right now...
-        display_id = screens[0];
+        display_id        = screens[0];
+        ctx->frame_width  = CGDisplayPixelsWide(screens[0]);
+        ctx->frame_height = CGDisplayPixelsHigh(screens[0]);
     } else {
         av_log(ctx, AV_LOG_ERROR, "No displays found!\n");
         return AVERROR(EIO);
@@ -731,14 +782,11 @@ av_log(ctx_p, AV_LOG_INFO, "init: ctx_p = %10X\n", (int)(ctx_p));
 
     avpriv_set_pts_info(stream, 64, 1, cgd_time_base);
 
-    // fake 100x100x3x8bit frames
-    int32_t image_buffer_size = (100 * 100) * (3 * 1);
-
     stream->codec->codec_id   = AV_CODEC_ID_RAWVIDEO;
     stream->codec->codec_type = AVMEDIA_TYPE_VIDEO;
-    stream->codec->width      = (int)100;
-    stream->codec->height     = (int)100;
-    stream->codec->pix_fmt    = AV_PIX_FMT_RGB24;
+    stream->codec->width      = ctx->frame_width;
+    stream->codec->height     = ctx->frame_height;
+    stream->codec->pix_fmt    = AV_PIX_FMT_BGR0;//AV_PIX_FMT_RGB24;
     // fake stream info generation: END
     ///////////////////////////////////////////////////////////////////////////
 
@@ -753,7 +801,7 @@ av_log(ctx_p, AV_LOG_INFO, "init: ctx_p = %10X\n", (int)(ctx_p));
         frame_receiver(status, displayTime, frameSurface, updateRef);
     };
 
-    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, 3840, 1024, 'BGRA', nil, ctx->display_queue, streamHandler_);
+    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', nil, ctx->display_queue, streamHandler_);
     if (ctx->display_stream == nil) {
         av_log(ctx, AV_LOG_ERROR, "invalid display stream\n");
     }
@@ -1001,34 +1049,59 @@ static int cgd_read_packet(AVFormatContext *s, AVPacket *pkt)
 do {
     if (ctx->frame_ready) {
         ctx->frame_ready = 0;
-//    if (1) {
-        // simulate 100x100 pixel output
-        int32_t image_buffer_size = (100 * 100) * (3 * 1);
+
+        // read frame from queue
+        NSMutableArray *frame_queue = ctx->frame_queue;
+        NSMutableArray *pts_queue   = ctx->pts_queue;
+        IOSurfaceRef frame = (IOSurfaceRef)frame_queue.lastObject;
+
+        //NSNumber     *pts   = (NSNumber*)pts_queue.lastObject;
+        NSNumber     *pts   = (NSNumber*)[pts_queue objectAtIndex:0];
+av_log(ctx, AV_LOG_INFO, "%lu - using displayTime: %llu\n", [pts_queue count], pts.unsignedLongLongValue);
+
+        NSNumber *num = (NSNumber*)[pts_queue objectAtIndex:0];
+        av_log(ctx_p, AV_LOG_INFO, "number = %llu\n", num.unsignedLongLongValue);
+
+
+
+        // create new packet
+        //int32_t image_buffer_size = (ctx->frame_width * ctx->frame_height) * (3 * 1);
+        int32_t image_buffer_size = IOSurfaceGetAllocSize(frame);
         if (av_new_packet(pkt, (int)(image_buffer_size)) < 0) {
             return AVERROR(EIO);
         }
+
+        //size_t width  = IOSurfaceGetWidth(frame);
+        //size_t height = IOSurfaceGetHeight(frame);
+        //OSType format = IOSurfaceGetPixelFormat(frame);
+        //av_log(ctx_p, AV_LOG_INFO, "IOSurface: %d bytes, %zux%zu, format %d, planes %zu, (%lu in queue)\n", image_buffer_size, width, height, format, IOSurfaceGetPlaneCount(frame), [frame_queue count]);
+        // copy frame data into output buffer
+        IOSurfaceLock(frame, kIOSurfaceLockReadOnly, nil);
+        uint8_t *src = (uint8_t*)IOSurfaceGetBaseAddress(frame);
+        memcpy(pkt->data, src, image_buffer_size);
+        IOSurfaceUnlock(frame, kIOSurfaceLockReadOnly, nil);
+
+        // decrement/release reference counters for the frame
+        IOSurfaceDecrementUseCount(frame);
+        CFRelease(frame);
+        [frame_queue removeLastObject];
+        [pts_queue   removeLastObject];
+
+
 
         // fake dts/pts
         AVRational cgd_time_base_q = {
             .num = 1,
             .den = cgd_time_base
         };
-    //    pkt->pts = pkt->dts = ctx->frames_captured++;
 
-        AVRational timebase_q = av_make_q(1, cgd_time_base);
-        pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, cgd_time_base_q, cgd_time_base_q);
+        // framerate seems to be dynamic, so use av_gettime() based PTS values, best to be recorded during the frame_receiver call
+        AVRational timebase_q = av_make_q(1, 60); // in 60th of a second (usual capture)
+        pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, timebase_q, cgd_time_base_q);
 
-        // fake more data in packet
         pkt->stream_index  = ctx->video_stream_index;
         pkt->flags        |= AV_PKT_FLAG_KEY;
-
-        for (int y = 0; y < 100; y++) {
-            for (int x = 0; x < 100; x++) {
-                pkt->data[y * 300 + x * 3 + 0] = 64; // R
-                pkt->data[y * 300 + x * 3 + 1] = ctx->frames_captured % 255; // G
-                pkt->data[y * 300 + x * 3 + 2] = 64; // B
-            }
-        }
+        ctx->frames_captured++;
 
     } else {
         pkt->data = NULL;
@@ -1159,6 +1232,10 @@ static int cgd_close(AVFormatContext *s)
 
     // close display dispatch queue
     dispatch_release(ctx->display_queue);
+
+    // release frame/pts queue
+    [ctx->frame_queue release];
+    [ctx->pts_queue   release];
 
     destroy_context(ctx);
 
