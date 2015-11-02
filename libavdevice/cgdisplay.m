@@ -40,7 +40,8 @@
 
 #define FRAME_QUEUE_SIZE 8
 
-static const int cgd_time_base = 1000000;
+//static const int cgd_time_base = 1000000;
+static const int cgd_time_base = 1e9;
 
 static const AVRational cgd_time_base_q = {
     .num = 1,
@@ -87,6 +88,7 @@ typedef struct
     AVClass*        class;
 
     CGDirectDisplayID display_id;
+    double          display_refresh_rate;
     CGDisplayStreamRef display_stream;
     dispatch_queue_t display_queue;
 
@@ -99,6 +101,8 @@ typedef struct
     int             frame_height;
     NSMutableArray  *frame_queue;
     NSMutableArray  *pts_queue;
+    uint64_t        first_pts;
+    mach_timebase_info_data_t mach_timebase;
 
 /*
     int             frames_captured;
@@ -716,16 +720,8 @@ static void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTi
         [pts_queue   removeLastObject];
     }
 
-    NSNumber *num = (NSNumber*)[NSNumber numberWithUnsignedLongLong:displayTime];
-
     [frame_queue insertObject:(id)frameSurface atIndex:0];
-    [pts_queue   insertObject:num atIndex:0];
-    //[pts_queue   insertObject:(id)[NSNumber numberWithUnsignedLongLong:displayTime] atIndex:0];
-    av_log(ctx_p, AV_LOG_INFO, "%lu - display time: %llu\n", [pts_queue count], displayTime);
-
-
-//    NSNumber *num = [NSNumber numberWithUnsignedLongLong:displayTime];
-//    av_log(ctx_p, AV_LOG_INFO, "number = %llu\n", num.unsignedLongLongValue);
+    [pts_queue   insertObject:(id)[NSNumber numberWithUnsignedLongLong:displayTime] atIndex:0];
 
     ctx_p->frame_ready = 1;
     pthread_cond_signal(&ctx_p->frame_wait_cond);
@@ -744,9 +740,9 @@ static int cgd_read_header(AVFormatContext *s)
     uint32_t num_screens    = 0;
 
     ctx->frame_queue = [[NSMutableArray alloc] initWithCapacity:FRAME_QUEUE_SIZE];
+    ctx->pts_queue   = [[NSMutableArray alloc] initWithCapacity:FRAME_QUEUE_SIZE];
 
-
-    CGDirectDisplayID display_id = 0;
+    mach_timebase_info(&ctx->mach_timebase);
 
     CGGetActiveDisplayList(0, NULL, &num_screens);
 
@@ -762,13 +758,21 @@ static int cgd_read_header(AVFormatContext *s)
                    CGDisplayPixelsHigh(screens[i]));
         }
         // always take display 0 right now...
-        display_id        = screens[0];
+        ctx->display_id   = screens[0];
         ctx->frame_width  = CGDisplayPixelsWide(screens[0]);
         ctx->frame_height = CGDisplayPixelsHigh(screens[0]);
     } else {
         av_log(ctx, AV_LOG_ERROR, "No displays found!\n");
         return AVERROR(EIO);
     }
+
+    // get display refresh rate
+    CGDisplayModeRef mode     = CGDisplayCopyDisplayMode(ctx->display_id);
+    ctx->display_refresh_rate = CGDisplayModeGetRefreshRate(mode);
+    if (ctx->display_refresh_rate < 1.0f) {
+        ctx->display_refresh_rate = 60.0f;
+    }
+    CGDisplayModeRelease(mode);
 
     ///////////////////////////////////////////////////////////////////////////
     // fake stream info generation: BEGIN
@@ -1054,15 +1058,7 @@ do {
         NSMutableArray *frame_queue = ctx->frame_queue;
         NSMutableArray *pts_queue   = ctx->pts_queue;
         IOSurfaceRef frame = (IOSurfaceRef)frame_queue.lastObject;
-
-        //NSNumber     *pts   = (NSNumber*)pts_queue.lastObject;
-        NSNumber     *pts   = (NSNumber*)[pts_queue objectAtIndex:0];
-av_log(ctx, AV_LOG_INFO, "%lu - using displayTime: %llu\n", [pts_queue count], pts.unsignedLongLongValue);
-
-        NSNumber *num = (NSNumber*)[pts_queue objectAtIndex:0];
-        av_log(ctx_p, AV_LOG_INFO, "number = %llu\n", num.unsignedLongLongValue);
-
-
+        NSNumber     *pts  = (NSNumber*)pts_queue.lastObject;
 
         // create new packet
         //int32_t image_buffer_size = (ctx->frame_width * ctx->frame_height) * (3 * 1);
@@ -1087,17 +1083,19 @@ av_log(ctx, AV_LOG_INFO, "%lu - using displayTime: %llu\n", [pts_queue count], p
         [frame_queue removeLastObject];
         [pts_queue   removeLastObject];
 
-
-
-        // fake dts/pts
-        AVRational cgd_time_base_q = {
-            .num = 1,
-            .den = cgd_time_base
-        };
-
         // framerate seems to be dynamic, so use av_gettime() based PTS values, best to be recorded during the frame_receiver call
-        AVRational timebase_q = av_make_q(1, 60); // in 60th of a second (usual capture)
-        pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, timebase_q, cgd_time_base_q);
+        //AVRational timebase_q = av_make_q(1, 60); // in 60th of a second (usual capture)
+        //pkt->pts = pkt->dts = av_rescale_q(ctx->frames_captured, timebase_q, cgd_time_base_q);
+
+        if (!ctx->first_pts) {
+            ctx->first_pts = pts.unsignedLongLongValue;
+        }
+        //AVRational timebase_in  = av_make_q(1, ctx->mach_timebase.denom * 1e9); // in 60th of a second (usual capture)
+        AVRational timebase_in  = av_make_q(ctx->mach_timebase.numer, ctx->mach_timebase.denom * 1e9); // in 60th of a second (usual capture)
+        AVRational timebase_out = av_make_q(1, (int)(ctx->display_refresh_rate)); // in 60th of a second (usual capture)
+        pkt->pts = pkt->dts = av_rescale_q(pts.unsignedLongLongValue - ctx->first_pts, timebase_in, timebase_out);
+
+av_log(ctx, AV_LOG_INFO, "using pts = %llu\n", pkt->pts);
 
         pkt->stream_index  = ctx->video_stream_index;
         pkt->flags        |= AV_PKT_FLAG_KEY;
