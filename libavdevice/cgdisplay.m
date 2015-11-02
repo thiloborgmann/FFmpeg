@@ -41,7 +41,7 @@
 #define FRAME_QUEUE_SIZE 8
 
 //static const int cgd_time_base = 1000000;
-static const int cgd_time_base = 1e9;
+static const int cgd_time_base = 1000000000;
 
 static const AVRational cgd_time_base_q = {
     .num = 1,
@@ -692,16 +692,16 @@ static void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTi
     // might cause a crash if StatusStopped comes in and is treated as a usual plane
     switch(status) {
         case kCGDisplayStreamFrameStatusFrameComplete:
-            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameComplete\n");
+//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameComplete\n");
             break;
         case kCGDisplayStreamFrameStatusFrameIdle:
-            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameIdle\n");
+//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameIdle\n");
             break;
         case kCGDisplayStreamFrameStatusFrameBlank:
-            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameBlank\n");
+//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameBlank\n");
             break;
         case kCGDisplayStreamFrameStatusStopped:
-            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusStopped\n");
+//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusStopped\n");
             return;
             break;
     }
@@ -710,6 +710,8 @@ static void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTi
     NSMutableArray *pts_queue   = ctx_p->pts_queue;
 
     lock_frames(ctx_p);
+
+IOSurfaceLock(frameSurface, kIOSurfaceLockReadOnly, nil);
 
     CFRetain(frameSurface);
     IOSurfaceIncrementUseCount(frameSurface);
@@ -1072,7 +1074,7 @@ do {
         //OSType format = IOSurfaceGetPixelFormat(frame);
         //av_log(ctx_p, AV_LOG_INFO, "IOSurface: %d bytes, %zux%zu, format %d, planes %zu, (%lu in queue)\n", image_buffer_size, width, height, format, IOSurfaceGetPlaneCount(frame), [frame_queue count]);
         // copy frame data into output buffer
-        IOSurfaceLock(frame, kIOSurfaceLockReadOnly, nil);
+//        IOSurfaceLock(frame, kIOSurfaceLockReadOnly, nil);
         uint8_t *src = (uint8_t*)IOSurfaceGetBaseAddress(frame);
         memcpy(pkt->data, src, image_buffer_size);
         IOSurfaceUnlock(frame, kIOSurfaceLockReadOnly, nil);
@@ -1095,7 +1097,9 @@ do {
         AVRational timebase_out = av_make_q(1, (int)(ctx->display_refresh_rate)); // in 60th of a second (usual capture)
         pkt->pts = pkt->dts = av_rescale_q(pts.unsignedLongLongValue - ctx->first_pts, timebase_in, timebase_out);
 
-av_log(ctx, AV_LOG_INFO, "using pts = %llu\n", pkt->pts);
+        pkt->pts = pkt->dts = pts.unsignedLongLongValue - ctx->first_pts;
+
+//av_log(ctx, AV_LOG_INFO, "using pts = %llu\n", pkt->pts);
 
         pkt->stream_index  = ctx->video_stream_index;
         pkt->flags        |= AV_PKT_FLAG_KEY;
