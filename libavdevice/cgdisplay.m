@@ -695,23 +695,24 @@ static void frame_receiver(CGDisplayStreamFrameStatus status, uint64_t displayTi
 //            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameComplete\n");
             break;
         case kCGDisplayStreamFrameStatusFrameIdle:
-//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameIdle\n");
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameIdle\n");
             break;
         case kCGDisplayStreamFrameStatusFrameBlank:
-//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameBlank\n");
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusFrameBlank\n");
             break;
         case kCGDisplayStreamFrameStatusStopped:
-//            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusStopped\n");
+            av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Status: kCGDisplayStreamFrameStatusStopped\n");
             return;
             break;
     }
+av_log(ctx_p, AV_LOG_INFO, "frame_receiver called! Drops: %zu\n", CGDisplayStreamUpdateGetDropCount(updateRef));
 
     NSMutableArray *frame_queue = ctx_p->frame_queue;
     NSMutableArray *pts_queue   = ctx_p->pts_queue;
 
     lock_frames(ctx_p);
 
-IOSurfaceLock(frameSurface, kIOSurfaceLockReadOnly, nil);
+//IOSurfaceLock(frameSurface, kIOSurfaceLockReadOnly, nil);
 
     CFRetain(frameSurface);
     IOSurfaceIncrementUseCount(frameSurface);
@@ -807,7 +808,18 @@ static int cgd_read_header(AVFormatContext *s)
         frame_receiver(status, displayTime, frameSurface, updateRef);
     };
 
-    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', nil, ctx->display_queue, streamHandler_);
+    void *keys[2];
+    void *values[2];
+
+    keys[0]   = (void*) kCGDisplayStreamQueueDepth;
+    int queue_size = 16;
+    values[0] = (void*) CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &queue_size);
+
+    CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, (const void **) keys, (const void **) values, 1, NULL, NULL);
+
+
+    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', options, ctx->display_queue, streamHandler_);
+    //ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', nil, ctx->display_queue, streamHandler_);
     if (ctx->display_stream == nil) {
         av_log(ctx, AV_LOG_ERROR, "invalid display stream\n");
     }
@@ -1074,7 +1086,7 @@ do {
         //OSType format = IOSurfaceGetPixelFormat(frame);
         //av_log(ctx_p, AV_LOG_INFO, "IOSurface: %d bytes, %zux%zu, format %d, planes %zu, (%lu in queue)\n", image_buffer_size, width, height, format, IOSurfaceGetPlaneCount(frame), [frame_queue count]);
         // copy frame data into output buffer
-//        IOSurfaceLock(frame, kIOSurfaceLockReadOnly, nil);
+        IOSurfaceLock(frame, kIOSurfaceLockReadOnly, nil);
         uint8_t *src = (uint8_t*)IOSurfaceGetBaseAddress(frame);
         memcpy(pkt->data, src, image_buffer_size);
         IOSurfaceUnlock(frame, kIOSurfaceLockReadOnly, nil);
