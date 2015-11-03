@@ -38,7 +38,7 @@
 #include "libavutil/time.h"
 #include "avdevice.h"
 
-#define FRAME_QUEUE_SIZE 8
+#define FRAME_QUEUE_SIZE 16
 
 //static const int cgd_time_base = 1000000;
 static const int cgd_time_base = 1000000000;
@@ -53,6 +53,8 @@ struct CGDPixelFormatSpec {
     OSType cgd_id;
 };
 
+// AV_PIX_FMT_BGR0 -> BGRA
+// AV_PIX_FMT_NV12 -> 420f
 static const struct CGDPixelFormatSpec cgd_pixel_formats[] = {
 /*    { AV_PIX_FMT_MONOBLACK,    kCVPixelFormatType_1Monochrome },
     { AV_PIX_FMT_RGB555BE,     kCVPixelFormatType_16BE555 },
@@ -793,7 +795,7 @@ static int cgd_read_header(AVFormatContext *s)
     stream->codec->codec_type = AVMEDIA_TYPE_VIDEO;
     stream->codec->width      = ctx->frame_width;
     stream->codec->height     = ctx->frame_height;
-    stream->codec->pix_fmt    = AV_PIX_FMT_BGR0;//AV_PIX_FMT_RGB24;
+    stream->codec->pix_fmt    = AV_PIX_FMT_NV12;//AV_PIX_FMT_YUV420P;//AV_PIX_FMT_BGR0;
     // fake stream info generation: END
     ///////////////////////////////////////////////////////////////////////////
 
@@ -818,8 +820,8 @@ static int cgd_read_header(AVFormatContext *s)
     CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, (const void **) keys, (const void **) values, 1, NULL, NULL);
 
 
-    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', options, ctx->display_queue, streamHandler_);
-    //ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', nil, ctx->display_queue, streamHandler_);
+    ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, '420v', options, ctx->display_queue, streamHandler_);
+    //ctx->display_stream = CGDisplayStreamCreateWithDispatchQueue(ctx->display_id, ctx->frame_width, ctx->frame_height, 'BGRA', options, ctx->display_queue, streamHandler_);
     if (ctx->display_stream == nil) {
         av_log(ctx, AV_LOG_ERROR, "invalid display stream\n");
     }
