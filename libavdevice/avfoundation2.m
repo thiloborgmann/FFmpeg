@@ -166,22 +166,22 @@ static void unlock_frames(AVFContext* ctx)
 
 static void destroy_context(AVFContext* ctx)
 {
+#define SaveCFRelease(ptr) { \
+    if (ptr) {               \
+        CFRelease(ptr);      \
+        ptr = NULL;          \
+    }                        \
+}
     [(__bridge AVCaptureSession*)ctx->capture_session stopRunning];
 
-    CFRelease(ctx->capture_session);
-    CFRelease(ctx->video_output);
-    CFRelease(ctx->avf_delegate);
-
-    ctx->capture_session = NULL;
-    ctx->video_output    = NULL;
-    ctx->avf_delegate    = NULL;
+    SaveCFRelease(ctx->capture_session);
+    SaveCFRelease(ctx->video_output);
+    SaveCFRelease(ctx->avf_delegate);
+    SaveCFRelease(ctx->current_frame);
 
     pthread_mutex_destroy(&ctx->frame_lock);
     pthread_cond_destroy(&ctx->frame_wait_cond);
-
-    if (ctx->current_frame) {
-        CFRelease(ctx->current_frame);
-    }
+#undef SaveRelease
 }
 
 /**
