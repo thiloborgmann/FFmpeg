@@ -317,7 +317,7 @@ unsupported_format:
 
             [[range valueForKey:@"minFrameRate"] getValue:&min_framerate];
             [[range valueForKey:@"maxFrameRate"] getValue:&max_framerate];
-            av_log(s, AV_LOG_ERROR, "  %dx%d@[%f %f]fps\n",
+            av_log(s, AV_LOG_ERROR, "\t%dx%d@[%f %f]fps\n",
                 dimensions.width, dimensions.height,
                 min_framerate, max_framerate);
         }
