@@ -325,6 +325,56 @@ unsupported_format:
     return AVERROR(EINVAL);
 }
 
+static AVCaptureDevice* get_video_device(AVFormatContext *s, NSArray *devices)
+{
+    AVFContext *ctx               = (AVFContext*)s->priv_data;
+    AVCaptureDevice *video_device = NULL;
+
+    ctx->video_filename = av_strdup(s->filename);
+
+    // getting video device by filename
+    if (ctx->video_filename) {
+        if (!strncmp(ctx->video_filename, "default", 7)) {
+            return [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+        } else if (strlen(ctx->video_filename)) {
+            // getting video device by localized name
+            for (AVCaptureDevice *device in devices) {
+                if (!strncmp(ctx->video_filename, [[device localizedName] UTF8String], strlen(ctx->video_filename))) {
+                    return device;
+                }
+            }
+            if (!video_device) {
+                // getting video device by uinique ID
+                for (AVCaptureDevice *device in devices) {
+                    if (!strncmp(ctx->video_filename, [[device uniqueID] UTF8String], strlen(ctx->video_filename))) {
+                        return device;
+                    }
+                }
+            }
+        }
+    }
+
+    // check for device index given in filename
+    if (ctx->video_device_index == -1 && ctx->video_filename) {
+        sscanf(ctx->video_filename, "%d", &ctx->video_device_index);
+    }
+
+    // getting video device by index
+    if (ctx->video_device_index >= 0) {
+        if (ctx->video_device_index < ctx->num_video_devices) {
+            return [devices objectAtIndex:ctx->video_device_index];
+        } else {
+            av_log(s, AV_LOG_ERROR, "Invalid device index\n");
+        }
+    }
+
+    if (!video_device) {
+        av_log(s, AV_LOG_ERROR, "Video device not found\n");
+    }
+
+    return video_device;
+}
+
 static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
 {
     AVFContext *ctx = (AVFContext*)s->priv_data;
@@ -339,11 +389,7 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
     NSError *error                         = NULL;
     AVCaptureInput* capture_input          = NULL;
 
-    if (ctx->video_device_index < ctx->num_video_devices) {
-        capture_input = (AVCaptureInput*) [AVCaptureDeviceInput deviceInputWithDevice:video_device error:&error];
-    } else {
-        capture_input = (AVCaptureInput*) video_device;
-    }
+    capture_input = (AVCaptureInput*) [AVCaptureDeviceInput deviceInputWithDevice:video_device error:&error];
 
     if (!capture_input) {
         av_log(s, AV_LOG_ERROR, "Failed to create AV capture input device: %s\n",
@@ -524,43 +570,10 @@ static int avf_read_header(AVFormatContext *s)
         FAIL;
     }
 
-    ctx->video_filename = av_strdup(s->filename);
+    // Get video device by index, localized name or unique ID
+    video_device = get_video_device(s, devices);
 
-    // check for device index given in filename
-    if (ctx->video_device_index == -1 && ctx->video_filename) {
-        sscanf(ctx->video_filename, "%d", &ctx->video_device_index);
-    }
-
-    if (ctx->video_device_index >= 0) {
-        if (ctx->video_device_index < ctx->num_video_devices) {
-            video_device = [devices objectAtIndex:ctx->video_device_index];
-        } else {
-            av_log(s, AV_LOG_ERROR, "Invalid device index\n");
-            FAIL;
-        }
-    } else if (ctx->video_filename &&
-               strncmp(ctx->video_filename, "none", 4)) {
-        if (!strncmp(ctx->video_filename, "default", 7)) {
-            video_device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
-        } else {
-            // looking for video inputs
-            for (AVCaptureDevice *device in devices) {
-                if (!strncmp(ctx->video_filename, [[device localizedName] UTF8String], strlen(ctx->video_filename))) {
-                    video_device = device;
-                    break;
-                }
-            }
-        }
-
-        if (!video_device) {
-            av_log(s, AV_LOG_ERROR, "Video device not found\n");
-            FAIL;
-        }
-    }
-
-    // Video capture device not found
     if (!video_device) {
-        av_log(s, AV_LOG_ERROR, "No AV capture device found\n");
         FAIL;
     }
 
@@ -569,17 +582,19 @@ static int avf_read_header(AVFormatContext *s)
     // Initialize capture session
     ctx->capture_session = CFBridgingRetain([[AVCaptureSession alloc] init]);
 
+    // Adding video device to cpature session
     if (add_video_device(s, video_device)) {
         FAIL;
     }
 
     [(__bridge AVCaptureSession*)ctx->capture_session startRunning];
 
-    /* Unlock device configuration only after the session is started so it
-     * does not reset the capture formats */
+    // Unlock device configuration only after the session is started so it
+    // does not reset the capture formats
     [video_device unlockForConfiguration];
 
-    if (video_device && get_video_config(s)) {
+    // Get the final video device configuration by run-time approach
+    if (get_video_config(s)) {
         FAIL;
     }
 
