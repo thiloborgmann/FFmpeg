@@ -93,6 +93,7 @@ typedef struct
     int                width, height;
 
     int                list_devices;
+    int                list_pixel_formats;
     int                video_device_index;
     int                video_stream_index;
 
@@ -164,6 +165,54 @@ static void unlock_frames(AVFContext* ctx)
 
 @end
 
+static struct AVFPixelFormatSpec pxl_fmt_from_avf_id(OSType avf_id)
+{
+    struct AVFPixelFormatSpec ret = {AV_PIX_FMT_NONE, 0};
+    int i;
+
+    for (i = 0; avf_pixel_formats[i].ff_id != AV_PIX_FMT_NONE; i++) {
+        if (avf_id == avf_pixel_formats[i].avf_id) {
+            return avf_pixel_formats[i];
+        }
+    }
+
+    return ret;
+}
+
+static void list_devices(AVFormatContext *s, NSString *prefix, NSArray *devices)
+{
+    av_log(s, AV_LOG_INFO, "%s\n", [prefix UTF8String]);
+
+    int index = 0;
+    for (AVCaptureDevice *device in devices) {
+        const char *name = [[device localizedName] UTF8String];
+        const char *uid  = [[device uniqueID] UTF8String];
+        index            = [devices indexOfObject:device];
+        av_log(s, AV_LOG_INFO, "[%d] %s: %s\n", index, uid, name);
+
+        if (av_log_get_level() >= AV_LOG_VERBOSE) {
+            for (AVCaptureDeviceFormat *format in device.formats) {
+                av_log(s, AV_LOG_VERBOSE, "\t%s\n",
+                       [[NSString stringWithFormat: @"%@", format] UTF8String]);
+            }
+        }
+        index++;
+    }
+}
+
+static void list_pixel_formats(AVFormatContext *s, NSString *prefix, NSArray *formats)
+{
+    av_log(s, AV_LOG_INFO, "%s\n", [prefix UTF8String]);
+
+    for (NSNumber *format in formats) {
+        struct AVFPixelFormatSpec fmt = pxl_fmt_from_avf_id([format intValue]);
+        if (fmt.ff_id != AV_PIX_FMT_NONE) {
+            av_log(s, AV_LOG_INFO, "\t%s\n", av_get_pix_fmt_name(fmt.ff_id));
+        }
+    }
+}
+
+
 static void destroy_context(AVFContext* ctx)
 {
 #define SaveCFRelease(ptr) { \
@@ -215,7 +264,6 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
             (dimensions.width == ctx->width && dimensions.height == ctx->height)) {
 
             selected_format = format;
-
             for (range in [format valueForKey:@"videoSupportedFrameRateRanges"]) {
                 double max_framerate;
 
@@ -353,26 +401,17 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
         av_log(s, AV_LOG_ERROR, "Selected pixel format (%s) is not supported by the input device.\n",
                av_get_pix_fmt_name(pxl_fmt_spec.ff_id));
 
+        // list available formats
+        NSArray *formats = [video_output availableVideoCVPixelFormatTypes];
+        list_pixel_formats(s, @"Supported pixel formats:", formats);
+
+        // search for a valid format for overriding user choice
         pxl_fmt_spec.ff_id = AV_PIX_FMT_NONE;
-
-        av_log(s, AV_LOG_ERROR, "Supported pixel formats:\n");
-        for (NSNumber *pxl_fmt in [video_output availableVideoCVPixelFormatTypes]) {
-            struct AVFPixelFormatSpec pxl_fmt_dummy;
-            pxl_fmt_dummy.ff_id = AV_PIX_FMT_NONE;
-            for (int i = 0; avf_pixel_formats[i].ff_id != AV_PIX_FMT_NONE; i++) {
-                if ([pxl_fmt intValue] == avf_pixel_formats[i].avf_id) {
-                    pxl_fmt_dummy = avf_pixel_formats[i];
-                    break;
-                }
-            }
-
-            if (pxl_fmt_dummy.ff_id != AV_PIX_FMT_NONE) {
-                av_log(s, AV_LOG_ERROR, "  %s\n", av_get_pix_fmt_name(pxl_fmt_dummy.ff_id));
-
-                // select first supported pixel format instead of user selected (or default) pixel format
-                if (pxl_fmt_spec.ff_id == AV_PIX_FMT_NONE) {
-                    pxl_fmt_spec = pxl_fmt_dummy;
-                }
+        for (NSNumber *format in formats) {
+            struct AVFPixelFormatSpec fmt = pxl_fmt_from_avf_id([format intValue]);
+            if (fmt.ff_id != AV_PIX_FMT_NONE) {
+                pxl_fmt_spec = fmt;
+                break;
             }
         }
 
@@ -473,15 +512,15 @@ static int avf_read_header(AVFormatContext *s)
 
     // List devices if requested
     if (ctx->list_devices) {
-        int index = 0;
-        av_log(s, AV_LOG_INFO, "AVFoundation video devices:\n");
-        for (AVCaptureDevice *device in devices) {
-            const char *name = [[device localizedName] UTF8String];
-            index            = [devices indexOfObject:device];
-            av_log(s, AV_LOG_INFO, "[%d] %s\n", index, name);
-            index++;
-        }
+        list_devices(s, @"AVFoundation video devices:", devices);
+        FAIL;
+    }
 
+    // List pixel formats if requested
+    if (ctx->list_pixel_formats) {
+        AVCaptureVideoDataOutput *video_output = [[AVCaptureVideoDataOutput alloc] init];
+        NSArray *formats = [video_output availableVideoCVPixelFormatTypes];
+        list_pixel_formats(s, @"AVFoundation pixel formats:", formats);
         FAIL;
     }
 
@@ -606,6 +645,9 @@ static const AVOption options[] = {
     { "list_devices", "list available devices", offsetof(AVFContext, list_devices), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM, "list_devices" },
     { "true", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_devices" },
     { "false", "", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_devices" },
+    { "list_pixel_formats", "list available formats", offsetof(AVFContext, list_pixel_formats), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM, "list_pixel_formats" },
+    { "true", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_pixel_formats" },
+    { "false", "", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_pixel_formats" },
     { "video_device_index", "select video device by index for devices with same name (starts at 0)", offsetof(AVFContext, video_device_index), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
     { "pixel_format", "set pixel format", offsetof(AVFContext, pixel_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_YUV420P}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM},
     { "framerate", "set frame rate", offsetof(AVFContext, framerate), AV_OPT_TYPE_VIDEO_RATE, {.str = "ntsc"}, 0, 0, AV_OPT_FLAG_DECODING_PARAM },
