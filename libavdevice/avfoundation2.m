@@ -328,7 +328,6 @@ unsupported_format:
 static AVCaptureDevice* get_video_device(AVFormatContext *s, NSArray *devices)
 {
     AVFContext *ctx               = (AVFContext*)s->priv_data;
-    AVCaptureDevice *video_device = NULL;
 
     ctx->video_filename = av_strdup(s->filename);
 
@@ -343,12 +342,10 @@ static AVCaptureDevice* get_video_device(AVFormatContext *s, NSArray *devices)
                     return device;
                 }
             }
-            if (!video_device) {
-                // getting video device by uinique ID
-                for (AVCaptureDevice *device in devices) {
-                    if (!strncmp(ctx->video_filename, [[device uniqueID] UTF8String], strlen(ctx->video_filename))) {
-                        return device;
-                    }
+            // getting video device by uinique ID
+            for (AVCaptureDevice *device in devices) {
+                if (!strncmp(ctx->video_filename, [[device uniqueID] UTF8String], strlen(ctx->video_filename))) {
+                    return device;
                 }
             }
         }
@@ -368,11 +365,9 @@ static AVCaptureDevice* get_video_device(AVFormatContext *s, NSArray *devices)
         }
     }
 
-    if (!video_device) {
-        av_log(s, AV_LOG_ERROR, "Video device not found\n");
-    }
+    av_log(s, AV_LOG_ERROR, "Video device not found\n");
 
-    return video_device;
+    return NULL;
 }
 
 static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
