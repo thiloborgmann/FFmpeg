@@ -370,41 +370,20 @@ static AVCaptureDevice* get_video_device(AVFormatContext *s, NSArray *devices)
     return NULL;
 }
 
-static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
+static int add_video_input(AVFormatContext *s, AVCaptureDevice *video_device)
 {
-    AVFContext *ctx = (AVFContext*)s->priv_data;
-    struct AVFPixelFormatSpec pxl_fmt_spec;
-    NSNumber *pixel_format;
-    NSDictionary *capture_dict;
-    dispatch_queue_t queue;
+    AVFContext *ctx                   = (AVFContext*)s->priv_data;
+    AVCaptureSession *capture_session = (__bridge AVCaptureSession*)ctx->capture_session;
+    AVCaptureInput* capture_input     = NULL;
+    NSError *error                    = NULL;
     int ret;
 
-    AVCaptureSession *capture_session      = (__bridge AVCaptureSession*)ctx->capture_session;
-    AVCaptureVideoDataOutput *video_output = NULL;
-    NSError *error                         = NULL;
-    AVCaptureInput* capture_input          = NULL;
-
+    // Create input
     capture_input = (AVCaptureInput*) [AVCaptureDeviceInput deviceInputWithDevice:video_device error:&error];
 
     if (!capture_input) {
         av_log(s, AV_LOG_ERROR, "Failed to create AV capture input device: %s\n",
                [[error localizedDescription] UTF8String]);
-        return 1;
-    }
-
-    if ([capture_session canAddInput:capture_input]) {
-        [capture_session addInput:capture_input];
-    } else {
-        av_log(s, AV_LOG_ERROR, "can't add video input to capture session\n");
-        return 1;
-    }
-
-    // Attaching output
-    ctx->video_output = CFBridgingRetain([[AVCaptureVideoDataOutput alloc] init]);
-    video_output      = (__bridge AVCaptureVideoDataOutput*)ctx->video_output;
-
-    if (!video_output) {
-        av_log(s, AV_LOG_ERROR, "Failed to init AV video output\n");
         return 1;
     }
 
@@ -418,6 +397,37 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
           av_log (s, AV_LOG_ERROR, "An error occurred: %s", [exception.reason UTF8String]);
           return AVERROR_EXTERNAL;
         }
+    }
+
+    // Attach input to capture session
+    if ([capture_session canAddInput:capture_input]) {
+        [capture_session addInput:capture_input];
+    } else {
+        av_log(s, AV_LOG_ERROR, "can't add video input to capture session\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+static int add_video_output(AVFormatContext *s)
+{
+    AVFContext *ctx = (AVFContext*)s->priv_data;
+    struct AVFPixelFormatSpec pxl_fmt_spec;
+    NSNumber *pixel_format;
+    NSDictionary *capture_dict;
+    dispatch_queue_t queue;
+
+    AVCaptureSession *capture_session      = (__bridge AVCaptureSession*)ctx->capture_session;
+    AVCaptureVideoDataOutput *video_output = NULL;
+
+    // creating output
+    ctx->video_output = CFBridgingRetain([[AVCaptureVideoDataOutput alloc] init]);
+    video_output      = (__bridge AVCaptureVideoDataOutput*)ctx->video_output;
+
+    if (!video_output) {
+        av_log(s, AV_LOG_ERROR, "Failed to init AV video output\n");
+        return 1;
     }
 
     // select pixel format
@@ -437,7 +447,8 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
         return 1;
     }
 
-    // check if the pixel format is available for this device
+    // check if the pixel format is available for this output
+    // if not, try to detect a valid format for overriding
     if ([[video_output availableVideoCVPixelFormatTypes] indexOfObject:[NSNumber numberWithInt:pxl_fmt_spec.avf_id]] == NSNotFound) {
         av_log(s, AV_LOG_ERROR, "Selected pixel format (%s) is not supported by the input device.\n",
                av_get_pix_fmt_name(pxl_fmt_spec.ff_id));
@@ -465,6 +476,7 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
         }
     }
 
+    // set final pixel format for the output
     ctx->pixel_format = pxl_fmt_spec.ff_id;
     pixel_format      = [NSNumber numberWithUnsignedInt:pxl_fmt_spec.avf_id];
     capture_dict      = [NSDictionary dictionaryWithObject:pixel_format
@@ -473,11 +485,13 @@ static int add_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
     [video_output setVideoSettings:capture_dict];
     [video_output setAlwaysDiscardsLateVideoFrames:YES];
 
+    // create delegate instance and dispatch queue
     ctx->avf_delegate = CFBridgingRetain([[AVFFrameReceiver2 alloc] initWithContext:ctx]);
 
     queue = dispatch_queue_create("avf2_queue", NULL);
     [video_output setSampleBufferDelegate:(__bridge id)ctx->avf_delegate queue:queue];
 
+    // attaching output to capture session
     if ([capture_session canAddOutput:video_output]) {
         [capture_session addOutput:video_output];
     } else {
@@ -565,7 +579,7 @@ static int avf_read_header(AVFormatContext *s)
         FAIL;
     }
 
-    // Get video device by index, localized name or unique ID
+    // Select video device by index, localized name or unique ID
     video_device = get_video_device(s, devices);
 
     if (!video_device) {
@@ -577,11 +591,17 @@ static int avf_read_header(AVFormatContext *s)
     // Initialize capture session
     ctx->capture_session = CFBridgingRetain([[AVCaptureSession alloc] init]);
 
-    // Adding video device to cpature session
-    if (add_video_device(s, video_device)) {
+    // Adding video input to capture session
+    if (add_video_input(s, video_device)) {
         FAIL;
     }
 
+    // Adding video output to capture session
+    if (add_video_output(s)) {
+        FAIL;
+    }
+
+    // Start the capture session
     [(__bridge AVCaptureSession*)ctx->capture_session startRunning];
 
     // Unlock device configuration only after the session is started so it
