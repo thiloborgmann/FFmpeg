@@ -246,31 +246,25 @@ static void destroy_context(AVFContext* ctx)
 static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
 {
     AVFContext *ctx = (AVFContext*)s->priv_data;
-
     double framerate          = av_q2d(ctx->framerate);
-    NSObject *range           = NULL;
-    NSObject *format          = NULL;
-    NSObject *selected_range  = NULL;
-    NSObject *selected_format = NULL;
+    AVFrameRateRange* selected_range  = NULL;
+    AVCaptureDeviceFormat* selected_format = NULL;
+    double epsilon = 0.00000001;
 
-    for (format in [video_device valueForKey:@"formats"]) {
-        CMFormatDescriptionRef formatDescription;
-        CMVideoDimensions dimensions;
+    for (AVCaptureDeviceFormat* format in [video_device formats]) {
 
-        formatDescription = (__bridge CMFormatDescriptionRef) [format performSelector:@selector(formatDescription)];
-        dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+        CMFormatDescriptionRef formatDescription = (CMFormatDescriptionRef) format.formatDescription;
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
 
         if ((ctx->width == 0 && ctx->height == 0) ||
             (dimensions.width == ctx->width && dimensions.height == ctx->height)) {
 
             selected_format = format;
-            for (range in [format valueForKey:@"videoSupportedFrameRateRanges"]) {
-                double max_framerate;
-
-                [[range valueForKey:@"maxFrameRate"] getValue:&max_framerate];
-                if (fabs (framerate - max_framerate) < 0.01) {
-                    selected_range = range;
-                    break;
+            for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
+                if (range.minFrameRate <= (framerate + epsilon) &&
+                                range.maxFrameRate >= (framerate - epsilon)) {
+                        selected_range = range;
+                        break;
                 }
             }
         }
@@ -280,17 +274,23 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
         av_log(s, AV_LOG_ERROR, "Selected video size (%dx%d) is not supported by the device\n",
             ctx->width, ctx->height);
         goto unsupported_format;
+    } else {
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(selected_format.formatDescription);
+        av_log(s, AV_LOG_INFO, "Setting video size to %dx%d\n",
+            dimensions.width, dimensions.height);
     }
 
     if (!selected_range) {
         av_log(s, AV_LOG_ERROR, "Selected framerate (%f) is not supported by the device\n",
             framerate);
         goto unsupported_format;
+    } else {
+        av_log(s, AV_LOG_INFO, "Setting framerate to %f\n",
+            framerate);
     }
 
     if ([video_device lockForConfiguration:NULL] == YES) {
-        NSValue *min_frame_duration = [selected_range valueForKey:@"minFrameDuration"];
-
+        NSValue* min_frame_duration = [NSValue valueWithCMTime:CMTimeMake(1, framerate)];
         [video_device setValue:selected_format forKey:@"activeFormat"];
         [video_device setValue:min_frame_duration forKey:@"activeVideoMinFrameDuration"];
         [video_device setValue:min_frame_duration forKey:@"activeVideoMaxFrameDuration"];
@@ -304,14 +304,14 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
 unsupported_format:
 
     av_log(s, AV_LOG_ERROR, "Supported modes:\n");
-    for (format in [video_device valueForKey:@"formats"]) {
+    for (AVCaptureDeviceFormat* format in [video_device formats]) {
         CMFormatDescriptionRef formatDescription;
         CMVideoDimensions dimensions;
 
         formatDescription = (__bridge CMFormatDescriptionRef) [format performSelector:@selector(formatDescription)];
         dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
 
-        for (range in [format valueForKey:@"videoSupportedFrameRateRanges"]) {
+        for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
             double min_framerate;
             double max_framerate;
 
