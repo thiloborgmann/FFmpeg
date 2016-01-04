@@ -221,7 +221,9 @@ static void destroy_context(AVFContext* ctx)
         ptr = NULL;          \
     }                        \
 }
-    [(__bridge AVCaptureSession*)ctx->capture_session stopRunning];
+    if (ctx->capture_session) {
+        [(__bridge AVCaptureSession*)ctx->capture_session stopRunning];
+    }
 
     SaveCFRelease(ctx->capture_session);
     SaveCFRelease(ctx->video_output);
