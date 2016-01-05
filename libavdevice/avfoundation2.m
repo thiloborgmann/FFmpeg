@@ -245,26 +245,26 @@ static void destroy_context(AVFContext* ctx)
  */
 static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_device)
 {
-    AVFContext *ctx = (AVFContext*)s->priv_data;
-    double framerate          = av_q2d(ctx->framerate);
-    AVFrameRateRange* selected_range  = NULL;
+    AVFContext *ctx                        = (AVFContext*)s->priv_data;
+    double framerate                       = av_q2d(ctx->framerate);
+    AVFrameRateRange* selected_range       = NULL;
     AVCaptureDeviceFormat* selected_format = NULL;
-    double epsilon = 0.00000001;
+    double epsilon                         = 0.00000001;
 
     for (AVCaptureDeviceFormat* format in [video_device formats]) {
-
-        CMFormatDescriptionRef formatDescription = (CMFormatDescriptionRef) format.formatDescription;
-        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
 
         if ((ctx->width == 0 && ctx->height == 0) ||
             (dimensions.width == ctx->width && dimensions.height == ctx->height)) {
-
             selected_format = format;
+
             for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
                 if (range.minFrameRate <= (framerate + epsilon) &&
-                                range.maxFrameRate >= (framerate - epsilon)) {
-                        selected_range = range;
-                        break;
+                    range.maxFrameRate >= (framerate - epsilon)) {
+                    selected_range = range;
+                    ctx->width     = dimensions.width;
+                    ctx->height    = dimensions.height;
+                    break;
                 }
             }
         }
@@ -275,9 +275,8 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
             ctx->width, ctx->height);
         goto unsupported_format;
     } else {
-        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(selected_format.formatDescription);
-        av_log(s, AV_LOG_INFO, "Setting video size to %dx%d\n",
-            dimensions.width, dimensions.height);
+        av_log(s, AV_LOG_DEBUG, "Setting video size to %dx%d\n",
+            ctx->width, ctx->height);
     }
 
     if (!selected_range) {
@@ -291,7 +290,7 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
 
     if ([video_device lockForConfiguration:NULL] == YES) {
         NSValue* min_frame_duration = [NSValue valueWithCMTime:CMTimeMake(1, framerate)];
-        [video_device setValue:selected_format forKey:@"activeFormat"];
+        [video_device setValue:selected_format    forKey:@"activeFormat"];
         [video_device setValue:min_frame_duration forKey:@"activeVideoMinFrameDuration"];
         [video_device setValue:min_frame_duration forKey:@"activeVideoMaxFrameDuration"];
     } else {
@@ -305,11 +304,7 @@ unsupported_format:
 
     av_log(s, AV_LOG_ERROR, "Supported modes:\n");
     for (AVCaptureDeviceFormat* format in [video_device formats]) {
-        CMFormatDescriptionRef formatDescription;
-        CMVideoDimensions dimensions;
-
-        formatDescription = (__bridge CMFormatDescriptionRef) [format performSelector:@selector(formatDescription)];
-        dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
 
         for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
             double min_framerate;
