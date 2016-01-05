@@ -81,7 +81,7 @@ static const struct AVFPixelFormatSpec avf_pixel_formats[] = {
 
 typedef struct
 {
-    AVClass*           class;
+    AVClass            *class;
 
     int                frames_captured;
     int64_t            first_pts;
@@ -109,12 +109,12 @@ typedef struct
     CMSampleBufferRef  current_frame;
 } AVFContext;
 
-static void lock_frames(AVFContext* ctx)
+static void lock_frames(AVFContext *ctx)
 {
     pthread_mutex_lock(&ctx->frame_lock);
 }
 
-static void unlock_frames(AVFContext* ctx)
+static void unlock_frames(AVFContext *ctx)
 {
     pthread_mutex_unlock(&ctx->frame_lock);
 }
@@ -124,14 +124,14 @@ static void unlock_frames(AVFContext* ctx)
  */
 @interface AVFFrameReceiver2 : NSObject
 {
-    AVFContext* _context;
+    AVFContext *_context;
 }
 
 - (id)initWithContext:(AVFContext*)context;
 
-- (void)  captureOutput:(AVCaptureOutput *)captureOutput
+- (void)  captureOutput:(AVCaptureOutput*)captureOutput
   didOutputSampleBuffer:(CMSampleBufferRef)videoFrame
-         fromConnection:(AVCaptureConnection *)connection;
+         fromConnection:(AVCaptureConnection*)connection;
 
 @end
 
@@ -145,9 +145,9 @@ static void unlock_frames(AVFContext* ctx)
     return self;
 }
 
-- (void)  captureOutput:(AVCaptureOutput *)captureOutput
+- (void)  captureOutput:(AVCaptureOutput*)captureOutput
   didOutputSampleBuffer:(CMSampleBufferRef)videoFrame
-         fromConnection:(AVCaptureConnection *)connection
+         fromConnection:(AVCaptureConnection*)connection
 {
     lock_frames(_context);
 
@@ -217,10 +217,10 @@ static void list_device_modes(AVFormatContext *s, AVCaptureDevice *video_device)
 {
     av_log(s, AV_LOG_INFO, "Supported modes for device \"%s\":\n", [[video_device localizedName] UTF8String]);
 
-    for (AVCaptureDeviceFormat* format in [video_device formats]) {
+    for (AVCaptureDeviceFormat *format in [video_device formats]) {
         CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
 
-        for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
+        for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
             double min_framerate;
             double max_framerate;
 
@@ -233,7 +233,7 @@ static void list_device_modes(AVFormatContext *s, AVCaptureDevice *video_device)
     }
 }
 
-static void destroy_context(AVFContext* ctx)
+static void destroy_context(AVFContext *ctx)
 {
 #define SaveCFRelease(ptr) { \
     if (ptr) {               \
@@ -269,18 +269,18 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
 {
     AVFContext *ctx                        = (AVFContext*)s->priv_data;
     double framerate                       = av_q2d(ctx->framerate);
-    AVFrameRateRange* selected_range       = NULL;
-    AVCaptureDeviceFormat* selected_format = NULL;
+    AVFrameRateRange *selected_range       = NULL;
+    AVCaptureDeviceFormat *selected_format = NULL;
     double epsilon                         = 0.00000001;
 
-    for (AVCaptureDeviceFormat* format in [video_device formats]) {
+    for (AVCaptureDeviceFormat *format in [video_device formats]) {
         CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
 
         if ((ctx->width == 0 && ctx->height == 0) ||
             (dimensions.width == ctx->width && dimensions.height == ctx->height)) {
             selected_format = format;
 
-            for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
+            for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
                 if (range.minFrameRate <= (framerate + epsilon) &&
                     range.maxFrameRate >= (framerate - epsilon)) {
                     selected_range = range;
@@ -311,7 +311,7 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
     }
 
     if ([video_device lockForConfiguration:NULL] == YES) {
-        NSValue* min_frame_duration = [NSValue valueWithCMTime:CMTimeMake(1, framerate)];
+        NSValue *min_frame_duration = [NSValue valueWithCMTime:CMTimeMake(1, framerate)];
         [video_device setValue:selected_format    forKey:@"activeFormat"];
         [video_device setValue:min_frame_duration forKey:@"activeVideoMinFrameDuration"];
         [video_device setValue:min_frame_duration forKey:@"activeVideoMaxFrameDuration"];
@@ -372,7 +372,7 @@ static int add_video_input(AVFormatContext *s, AVCaptureDevice *video_device)
 {
     AVFContext *ctx                   = (AVFContext*)s->priv_data;
     AVCaptureSession *capture_session = (__bridge AVCaptureSession*)ctx->capture_session;
-    AVCaptureInput* capture_input     = NULL;
+    AVCaptureInput *capture_input     = NULL;
     NSError *error                    = NULL;
     int ret;
 
@@ -508,7 +508,7 @@ static int get_video_config(AVFormatContext *s)
 {
     AVFContext *ctx = (AVFContext*)s->priv_data;
 
-    AVStream* stream = avformat_new_stream(s, NULL);
+    AVStream *stream = avformat_new_stream(s, NULL);
 
     CVImageBufferRef image_buffer;
     CGSize image_buffer_size;
@@ -628,7 +628,7 @@ static int avf_read_header(AVFormatContext *s)
 
 static int avf_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    AVFContext* ctx = (AVFContext*)s->priv_data;
+    AVFContext *ctx = (AVFContext*)s->priv_data;
 
     do {
         CVImageBufferRef image_buffer;
@@ -674,7 +674,7 @@ static int avf_read_packet(AVFormatContext *s, AVPacket *pkt)
 
 static int avf_close(AVFormatContext *s)
 {
-    AVFContext* ctx = (AVFContext*)s->priv_data;
+    AVFContext *ctx = (AVFContext*)s->priv_data;
     destroy_context(ctx);
     return 0;
 }
