@@ -212,6 +212,25 @@ static void list_pixel_formats(AVFormatContext *s, NSString *prefix, NSArray *fo
     }
 }
 
+static void list_device_modes(AVFormatContext *s, AVCaptureDevice *video_device)
+{
+    av_log(s, AV_LOG_INFO, "Supported modes for device \"%s\":\n", [[video_device localizedName] UTF8String]);
+
+    for (AVCaptureDeviceFormat* format in [video_device formats]) {
+        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
+
+        for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
+            double min_framerate;
+            double max_framerate;
+
+            [[range valueForKey:@"minFrameRate"] getValue:&min_framerate];
+            [[range valueForKey:@"maxFrameRate"] getValue:&max_framerate];
+            av_log(s, AV_LOG_INFO, "\t%dx%d@[%f %f]fps\n",
+                dimensions.width, dimensions.height,
+                min_framerate, max_framerate);
+        }
+    }
+}
 
 static void destroy_context(AVFContext* ctx)
 {
@@ -273,7 +292,7 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
     if (!selected_format) {
         av_log(s, AV_LOG_ERROR, "Selected video size (%dx%d) is not supported by the device\n",
             ctx->width, ctx->height);
-        goto unsupported_format;
+        return AVERROR(EINVAL);
     } else {
         av_log(s, AV_LOG_DEBUG, "Setting video size to %dx%d\n",
             ctx->width, ctx->height);
@@ -282,7 +301,7 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
     if (!selected_range) {
         av_log(s, AV_LOG_ERROR, "Selected framerate (%f) is not supported by the device\n",
             framerate);
-        goto unsupported_format;
+        return AVERROR(EINVAL);
     } else {
         av_log(s, AV_LOG_INFO, "Setting framerate to %f\n",
             framerate);
@@ -295,29 +314,10 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
         [video_device setValue:min_frame_duration forKey:@"activeVideoMaxFrameDuration"];
     } else {
         av_log(s, AV_LOG_ERROR, "Could not lock device for configuration");
-        return AVERROR(EINVAL);
+        return AVERROR(EIO);
     }
 
     return 0;
-
-unsupported_format:
-
-    av_log(s, AV_LOG_ERROR, "Supported modes:\n");
-    for (AVCaptureDeviceFormat* format in [video_device formats]) {
-        CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
-
-        for (AVFrameRateRange* range in format.videoSupportedFrameRateRanges) {
-            double min_framerate;
-            double max_framerate;
-
-            [[range valueForKey:@"minFrameRate"] getValue:&min_framerate];
-            [[range valueForKey:@"maxFrameRate"] getValue:&max_framerate];
-            av_log(s, AV_LOG_ERROR, "\t%dx%d@[%f %f]fps\n",
-                dimensions.width, dimensions.height,
-                min_framerate, max_framerate);
-        }
-    }
-    return AVERROR(EINVAL);
 }
 
 static AVCaptureDevice* get_video_device(AVFormatContext *s, NSArray *devices)
@@ -384,7 +384,11 @@ static int add_video_input(AVFormatContext *s, AVCaptureDevice *video_device)
 
     // Configure device framerate and video size
     @try {
-        if ((ret = configure_video_device(s, video_device)) < 0) {
+        ret = configure_video_device(s, video_device);
+        if (ret == AVERROR(EINVAL)) {
+            list_device_modes(s, video_device);
+        }
+        if (ret < 0) {
             return ret;
         }
     } @catch (NSException *exception) {
