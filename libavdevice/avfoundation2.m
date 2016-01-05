@@ -94,6 +94,7 @@ typedef struct
 
     int                list_devices;
     int                list_pixel_formats;
+    int                list_device_modes;
     int                video_device_index;
     int                video_stream_index;
 
@@ -587,6 +588,12 @@ static int avf_read_header(AVFormatContext *s)
 
     av_log(s, AV_LOG_DEBUG, "'%s' opened\n", [[video_device localizedName] UTF8String]);
 
+    // List device modes if requested
+    if (ctx->list_device_modes) {
+        list_device_modes(s, video_device);
+        FAIL;
+    }
+
     // Initialize capture session
     ctx->capture_session = CFBridgingRetain([[AVCaptureSession alloc] init]);
 
@@ -677,6 +684,9 @@ static const AVOption options[] = {
     { "list_pixel_formats", "list available formats", offsetof(AVFContext, list_pixel_formats), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM, "list_pixel_formats" },
     { "true", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_pixel_formats" },
     { "false", "", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_pixel_formats" },
+    { "list_device_modes", "list available modes of a device", offsetof(AVFContext, list_device_modes), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM, "list_device_modes" },
+    { "true", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_device_modes" },
+    { "false", "", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, AV_OPT_FLAG_DECODING_PARAM, "list_device_modes" },
     { "video_device_index", "select video device by index for devices with same name (starts at 0)", offsetof(AVFContext, video_device_index), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
     { "pixel_format", "set pixel format", offsetof(AVFContext, pixel_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_YUV420P}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM},
     { "framerate", "set frame rate", offsetof(AVFContext, framerate), AV_OPT_TYPE_VIDEO_RATE, {.str = "ntsc"}, 0, 0, AV_OPT_FLAG_DECODING_PARAM },
