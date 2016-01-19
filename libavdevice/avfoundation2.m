@@ -271,7 +271,7 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
     double framerate                       = av_q2d(ctx->framerate);
     AVFrameRateRange *selected_range       = NULL;
     AVCaptureDeviceFormat *selected_format = NULL;
-    double epsilon                         = 0.00000001;
+    double epsilon                         = 0.0001;
 
     for (AVCaptureDeviceFormat *format in [video_device formats]) {
         CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
@@ -311,10 +311,18 @@ static int configure_video_device(AVFormatContext *s, AVCaptureDevice *video_dev
     }
 
     if ([video_device lockForConfiguration:NULL] == YES) {
-        NSValue *min_frame_duration = [NSValue valueWithCMTime:CMTimeMake(1, framerate)];
-        [video_device setValue:selected_format    forKey:@"activeFormat"];
-        [video_device setValue:min_frame_duration forKey:@"activeVideoMinFrameDuration"];
-        [video_device setValue:min_frame_duration forKey:@"activeVideoMaxFrameDuration"];
+        [video_device setActiveFormat : selected_format];
+        if (selected_range.minFrameRate == selected_range.maxFrameRate) {
+            //CMTimeMake(int64_t value, int32_t timescale) does not allow to use a Float64 as a timescale
+            //Some camera have extremely precise rate values and rounding them does not work
+            // if a range support only one value, use this value instead of the passed framerate
+            //(which may have been round up and will cause failure)
+            [video_device setActiveVideoMinFrameDuration : selected_range.minFrameDuration];
+            [video_device setActiveVideoMaxFrameDuration : selected_range.maxFrameDuration];
+        } else {
+            [video_device setActiveVideoMinFrameDuration : CMTimeMake(1, framerate)];
+            [video_device setActiveVideoMaxFrameDuration : CMTimeMake(1, framerate)];
+        }
     } else {
         av_log(s, AV_LOG_ERROR, "Could not lock device for configuration");
         return AVERROR(EIO);
