@@ -12,6 +12,7 @@ version <next>:
 - ciescope filter
 - protocol blacklisting API
 - MediaCodec H264 decoding
+- coreimage filter (GPU based image filtering on OSX)
 
 
 version 3.0:
