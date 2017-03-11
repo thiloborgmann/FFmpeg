@@ -224,6 +224,8 @@ typedef struct OptionsContext {
     int        nb_disposition;
     SpecifierOpt *program;
     int        nb_program;
+    SpecifierOpt *time_bases;
+    int        nb_time_bases;
 } OptionsContext;
 
 typedef struct InputFilter {
@@ -254,6 +256,18 @@ typedef struct OutputFilter {
     /* temporary storage until stream maps are processed */
     AVFilterInOut       *out_tmp;
     enum AVMediaType     type;
+
+    /* desired output stream properties */
+    int width, height;
+    AVRational frame_rate;
+    int format;
+    int sample_rate;
+    uint64_t channel_layout;
+
+    // those are only set if no format is specified and the encoder gives us multiple options
+    int *formats;
+    uint64_t *channel_layouts;
+    int *sample_rates;
 } OutputFilter;
 
 typedef struct FilterGraph {
@@ -583,6 +597,7 @@ extern char *videotoolbox_pixfmt;
 
 extern int filter_nbthreads;
 extern int filter_complex_nbthreads;
+extern int vstats_version;
 
 extern const AVIOInterruptCB int_cb;
 
@@ -590,6 +605,9 @@ extern const OptionDef options[];
 extern const HWAccel hwaccels[];
 extern int hwaccel_lax_profile_check;
 extern AVBufferRef *hw_device_ctx;
+#if CONFIG_QSV
+extern char *qsv_device;
+#endif
 
 
 void term_init(void);

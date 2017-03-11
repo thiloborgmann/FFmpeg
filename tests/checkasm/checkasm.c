@@ -89,6 +89,9 @@ static const struct {
     #if CONFIG_H264QPEL
         { "h264qpel", checkasm_check_h264qpel },
     #endif
+    #if CONFIG_HEVC_DECODER
+        { "hevc_idct", checkasm_check_hevc_idct },
+    #endif
     #if CONFIG_JPEG2000_DECODER
         { "jpeg2000dsp", checkasm_check_jpeg2000dsp },
     #endif
@@ -97,6 +100,9 @@ static const struct {
     #endif
     #if CONFIG_V210_ENCODER
         { "v210enc", checkasm_check_v210enc },
+    #endif
+    #if CONFIG_VP8DSP
+        { "vp8dsp", checkasm_check_vp8dsp },
     #endif
     #if CONFIG_VP9_DECODER
         { "vp9dsp", checkasm_check_vp9dsp },
