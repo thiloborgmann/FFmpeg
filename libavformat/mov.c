@@ -407,11 +407,11 @@ retry:
                 return ret;
             } else if (!key && c->found_hdlr_mdta && c->meta_keys) {
                 uint32_t index = AV_RB32(&atom.type);
-                if (index < c->meta_keys_count) {
+                if (index < c->meta_keys_count && index > 0) {
                     key = c->meta_keys[index];
                 } else {
                     av_log(c->fc, AV_LOG_WARNING,
-                           "The index of 'data' is out of range: %d >= %d.\n",
+                           "The index of 'data' is out of range: %d < 1 or >= %d.\n",
                            index, c->meta_keys_count);
                 }
             }
@@ -742,6 +742,8 @@ static int mov_read_hdlr(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     title_size = atom.size - 24;
     if (title_size > 0) {
+        if (title_size > FFMIN(INT_MAX, SIZE_MAX-1))
+            return AVERROR_INVALIDDATA;
         title_str = av_malloc(title_size + 1); /* Add null terminator */
         if (!title_str)
             return AVERROR(ENOMEM);
@@ -2845,10 +2847,22 @@ static int64_t find_prev_closest_index(AVStream *st,
     AVIndexEntry *e_keep = st->index_entries;
     int nb_keep = st->nb_index_entries;
     int64_t found = -1;
+    int64_t i = 0;
 
     st->index_entries = e_old;
     st->nb_index_entries = nb_old;
     found = av_index_search_timestamp(st, timestamp, flag | AVSEEK_FLAG_BACKWARD);
+
+    // Keep going backwards in the index entries until the timestamp is the same.
+    if (found >= 0) {
+        for (i = found; i > 0 && e_old[i].timestamp == e_old[i - 1].timestamp;
+             i--) {
+            if ((flag & AVSEEK_FLAG_ANY) ||
+                (e_old[i - 1].flags & AVINDEX_KEYFRAME)) {
+                found = i - 1;
+            }
+        }
+    }
 
     /* restore AVStream state*/
     st->index_entries = e_keep;
@@ -4621,8 +4635,10 @@ static int mov_read_sv3d(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 {
     AVStream *st;
     MOVStreamContext *sc;
-    int size;
+    int size, layout;
     int32_t yaw, pitch, roll;
+    size_t l = 0, t = 0, r = 0, b = 0;
+    size_t padding = 0;
     uint32_t tag;
     enum AVSphericalProjection projection;
 
@@ -4683,10 +4699,33 @@ static int mov_read_sv3d(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     avio_skip(pb, 4); /*  version + flags */
     switch (tag) {
     case MKTAG('c','b','m','p'):
+        layout = avio_rb32(pb);
+        if (layout) {
+            av_log(c->fc, AV_LOG_WARNING,
+                   "Unsupported cubemap layout %d\n", layout);
+            return 0;
+        }
         projection = AV_SPHERICAL_CUBEMAP;
+        padding = avio_rb32(pb);
         break;
     case MKTAG('e','q','u','i'):
-        projection = AV_SPHERICAL_EQUIRECTANGULAR;
+        t = avio_rb32(pb);
+        b = avio_rb32(pb);
+        l = avio_rb32(pb);
+        r = avio_rb32(pb);
+
+        if (b >= UINT_MAX - t || r >= UINT_MAX - l) {
+            av_log(c->fc, AV_LOG_ERROR,
+                   "Invalid bounding rectangle coordinates %"SIZE_SPECIFIER","
+                   "%"SIZE_SPECIFIER",%"SIZE_SPECIFIER",%"SIZE_SPECIFIER"\n",
+                   l, t, r, b);
+            return AVERROR_INVALIDDATA;
+        }
+
+        if (l || t || r || b)
+            projection = AV_SPHERICAL_EQUIRECTANGULAR_TILE;
+        else
+            projection = AV_SPHERICAL_EQUIRECTANGULAR;
         break;
     default:
         av_log(c->fc, AV_LOG_ERROR, "Unknown projection type\n");
@@ -4702,6 +4741,13 @@ static int mov_read_sv3d(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     sc->spherical->yaw   = yaw;
     sc->spherical->pitch = pitch;
     sc->spherical->roll  = roll;
+
+    sc->spherical->padding = padding;
+
+    sc->spherical->bound_left   = l;
+    sc->spherical->bound_top    = t;
+    sc->spherical->bound_right  = r;
+    sc->spherical->bound_bottom = b;
 
     return 0;
 }
@@ -4787,7 +4833,7 @@ static int mov_read_uuid(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         0x88, 0x14, 0x58, 0x7a, 0x02, 0x52, 0x1f, 0xdd,
     };
 
-    if (atom.size < sizeof(uuid) || atom.size == INT64_MAX)
+    if (atom.size < sizeof(uuid) || atom.size >= FFMIN(INT_MAX, SIZE_MAX))
         return AVERROR_INVALIDDATA;
 
     if (c->fc->nb_streams < 1)
@@ -4966,8 +5012,8 @@ static int mov_read_senc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     avio_rb32(pb);        /* entries */
 
-    if (atom.size < 8) {
-        av_log(c->fc, AV_LOG_ERROR, "senc atom size %"PRId64" too small\n", atom.size);
+    if (atom.size < 8 || atom.size > FFMIN(INT_MAX, SIZE_MAX)) {
+        av_log(c->fc, AV_LOG_ERROR, "senc atom size %"PRId64" invalid\n", atom.size);
         return AVERROR_INVALIDDATA;
     }
 
@@ -5033,6 +5079,11 @@ static int mov_read_saiz(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     if (atom.size <= atom_header_size) {
         return 0;
+    }
+
+    if (atom.size > FFMIN(INT_MAX, SIZE_MAX)) {
+        av_log(c->fc, AV_LOG_ERROR, "saiz atom auxiliary_info_sizes size %"PRId64" invalid\n", atom.size);
+        return AVERROR_INVALIDDATA;
     }
 
     /* save the auxiliary info sizes as is */

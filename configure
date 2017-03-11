@@ -1821,7 +1821,6 @@ ARCH_FEATURES="
 
 BUILTIN_LIST="
     atomic_cas_ptr
-    atomic_compare_exchange
     machine_rw_barrier
     MemoryBarrier
     mm_empty
@@ -2107,7 +2106,7 @@ CONFIG_EXTRA="
     huffyuvencdsp
     idctdsp
     iirfilter
-    imdct15
+    mdct15
     intrax8
     iso_media
     ividsp
@@ -2322,7 +2321,7 @@ symver_if_any="symver_asm_label symver_gnu_asm"
 valgrind_backtrace_deps="!optimizations valgrind_valgrind_h"
 
 # threading support
-atomics_gcc_if_any="sync_val_compare_and_swap atomic_compare_exchange"
+atomics_gcc_if="sync_val_compare_and_swap"
 atomics_suncc_if="atomic_cas_ptr machine_rw_barrier"
 atomics_win32_if="MemoryBarrier"
 atomics_native_if_any="$ATOMICS_LIST"
@@ -2339,6 +2338,7 @@ h264dsp_select="startcode"
 frame_thread_encoder_deps="encoders threads"
 intrax8_select="blockdsp idctdsp"
 mdct_select="fft"
+mdct15_select="fft"
 me_cmp_select="fdctdsp idctdsp pixblockdsp"
 mpeg_er_select="error_resilience"
 mpegaudio_select="mpegaudiodsp"
@@ -2349,7 +2349,7 @@ vc1dsp_select="h264chroma qpeldsp startcode"
 rdft_select="fft"
 
 # decoders / encoders
-aac_decoder_select="imdct15 mdct sinewin"
+aac_decoder_select="mdct15 mdct sinewin"
 aac_fixed_decoder_select="mdct sinewin"
 aac_encoder_select="audio_frame_queue iirfilter lpc mdct sinewin"
 aac_latm_decoder_select="aac_decoder aac_latm_parser"
@@ -2491,7 +2491,8 @@ nellymoser_encoder_select="audio_frame_queue mdct sinewin"
 nuv_decoder_select="idctdsp lzo"
 on2avc_decoder_select="mdct"
 opus_decoder_deps="swresample"
-opus_decoder_select="imdct15"
+opus_decoder_select="mdct15"
+opus_encoder_select="audio_frame_queue mdct15"
 png_decoder_select="zlib"
 png_encoder_select="llvidencdsp zlib"
 prores_decoder_select="blockdsp idctdsp"
@@ -2511,7 +2512,7 @@ rv20_encoder_select="h263_encoder"
 rv30_decoder_select="golomb h264pred h264qpel mpegvideo rv34dsp"
 rv40_decoder_select="golomb h264pred h264qpel mpegvideo rv34dsp"
 screenpresso_decoder_select="zlib"
-shorten_decoder_select="golomb"
+shorten_decoder_select="golomb bswapdsp"
 sipr_decoder_select="lsp"
 snow_decoder_select="dwt h264qpel hpeldsp me_cmp rangecoder videodsp"
 snow_encoder_select="aandcttables dwt h264qpel hpeldsp me_cmp mpegvideoenc rangecoder"
@@ -2768,6 +2769,8 @@ mpeg2_qsv_decoder_deps="libmfx"
 mpeg2_qsv_decoder_select="qsvdec mpeg2_qsv_hwaccel"
 mpeg2_qsv_encoder_deps="libmfx"
 mpeg2_qsv_encoder_select="qsvenc"
+mpeg2_vaapi_encoder_deps="VAEncPictureParameterBufferMPEG2"
+mpeg2_vaapi_encoder_select="vaapi_encode"
 mpeg4_cuvid_decoder_deps="cuda cuvid"
 mpeg4_cuvid_decoder_select="mpeg4_cuvid_hwaccel"
 nvenc_h264_encoder_deps="nvenc"
@@ -2777,6 +2780,8 @@ vc1_cuvid_decoder_deps="cuda cuvid"
 vc1_cuvid_decoder_select="vc1_cuvid_hwaccel"
 vp8_cuvid_decoder_deps="cuda cuvid"
 vp8_cuvid_decoder_select="vp8_cuvid_hwaccel"
+vp8_vaapi_encoder_deps="VAEncPictureParameterBufferVP8"
+vp8_vaapi_encoder_select="vaapi_encode"
 vp9_cuvid_decoder_deps="cuda cuvid"
 vp9_cuvid_decoder_select="vp9_cuvid_hwaccel"
 
@@ -3078,6 +3083,7 @@ bs2b_filter_deps="libbs2b"
 colormatrix_filter_deps="gpl"
 cover_rect_filter_deps="avcodec avformat gpl"
 cropdetect_filter_deps="gpl"
+deinterlace_vaapi_filter_deps="vaapi"
 delogo_filter_deps="gpl"
 deshake_filter_select="pixelutils"
 drawtext_filter_deps="libfreetype"
@@ -5526,7 +5532,6 @@ if ! disabled network; then
 fi
 
 check_builtin atomic_cas_ptr atomic.h "void **ptr; void *oldval, *newval; atomic_cas_ptr(ptr, oldval, newval)"
-check_builtin atomic_compare_exchange "" "int *ptr, *oldval; int newval; __atomic_compare_exchange_n(ptr, oldval, newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)"
 check_builtin machine_rw_barrier mbarrier.h "__machine_rw_barrier()"
 check_builtin MemoryBarrier windows.h "MemoryBarrier()"
 check_builtin sarestart signal.h "SA_RESTART"
@@ -5653,6 +5658,8 @@ check_type "va/va.h va/va_vpp.h" "VAProcPipelineParameterBuffer"
 check_type "va/va.h va/va_enc_h264.h" "VAEncPictureParameterBufferH264"
 check_type "va/va.h va/va_enc_hevc.h" "VAEncPictureParameterBufferHEVC"
 check_type "va/va.h va/va_enc_jpeg.h" "VAEncPictureParameterBufferJPEG"
+check_type "va/va.h va/va_enc_mpeg2.h" "VAEncPictureParameterBufferMPEG2"
+check_type "va/va.h va/va_enc_vp8.h"  "VAEncPictureParameterBufferVP8"
 
 check_type "vdpau/vdpau.h" "VdpPictureInfoHEVC"
 

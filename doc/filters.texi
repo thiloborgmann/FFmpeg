@@ -306,6 +306,8 @@ smartblur = enable='between(t,10,3*60)',
 curves    = enable='gte(t,3)' : preset=cross_process
 @end example
 
+See @code{ffmpeg -filters} to view which filters have timeline support.
+
 @c man end FILTERGRAPH DESCRIPTION
 
 @chapter Audio Filters
@@ -1411,7 +1413,9 @@ The filter accepts the syntax
 [@var{sample_rate}:]@var{resampler_options}, where @var{sample_rate}
 expresses a sample rate and @var{resampler_options} is a list of
 @var{key}=@var{value} pairs, separated by ":". See the
-ffmpeg-resampler manual for the complete list of supported options.
+@ref{Resampler Options,,the "Resampler Options" section in the
+ffmpeg-resampler(1) manual,ffmpeg-resampler}
+for the complete list of supported options.
 
 @subsection Examples
 
@@ -1905,9 +1909,6 @@ Remap input channels to new locations.
 
 It accepts the following parameters:
 @table @option
-@item channel_layout
-The channel layout of the output stream.
-
 @item map
 Map channels from input to output. The argument is a '|'-separated list of
 mappings, each in the @code{@var{in_channel}-@var{out_channel}} or
@@ -1916,6 +1917,9 @@ channel (e.g. FL for front left) or its index in the input channel layout.
 @var{out_channel} is the name of the output channel or its index in the output
 channel layout. If @var{out_channel} is not given then it is implicitly an
 index, starting with zero and increasing by one for each mapping.
+
+@item channel_layout
+The channel layout of the output stream.
 @end table
 
 If no mapping is present, the filter will implicitly map input channels to
@@ -6770,6 +6774,12 @@ Select how the @var{text} is expanded. Can be either @code{none},
 @code{normal} (default). See the @ref{drawtext_expansion, Text expansion} section
 below for details.
 
+@item basetime
+Set a start time for the count. Value is in microseconds. Only applied
+in the deprecated strftime expansion mode. To emulate in normal expansion
+mode use the @code{pts} function, supplying the start time (in seconds)
+as the second argument.
+
 @item fix_bounds
 If true, check and fix text coords to avoid clipping.
 
@@ -6790,9 +6800,6 @@ The font family to be used for drawing text. By default Sans.
 @item fontfile
 The font file to be used for drawing text. The path must be included.
 This parameter is mandatory if the fontconfig support is disabled.
-
-@item draw
-This option does not exist, please see the timeline system
 
 @item alpha
 Draw the text applying alpha blending. The value can
@@ -6866,6 +6873,10 @@ option must be specified.
 
 @item timecode_rate, rate, r
 Set the timecode frame rate (timecode only).
+
+@item tc24hmax
+If set to 1, the output of the timecode option will wrap around at 24 hours.
+Default is 0 (disabled).
 
 @item text
 The text string to be drawn. The text must be a sequence of UTF-8
@@ -16400,13 +16411,13 @@ Float representation of @code{value} from metadata key.
 
 @item VALUE2
 Float representation of @code{value} as supplied by user in @code{value} option.
+@end table
 
 @item file
 If specified in @code{print} mode, output is written to the named file. Instead of
 plain filename any writable url can be specified. Filename ``-'' is a shorthand
 for standard output. If @code{file} option is not set, output is written to the log
 with AV_LOG_INFO loglevel.
-@end table
 
 @end table
 
@@ -17886,7 +17897,23 @@ Set if channels should be drawn separately or overlap. Default value is 0.
 Set colors separated by '|' which are going to be used for drawing of each channel.
 
 @item scale
-Set amplitude scale. Can be linear @code{lin} or logarithmic @code{log}.
+Set amplitude scale.
+
+Available values are:
+@table @samp
+@item lin
+Linear.
+
+@item log
+Logarithmic.
+
+@item sqrt
+Square root.
+
+@item cbrt
+Cubic root.
+@end table
+
 Default is linear.
 @end table
 

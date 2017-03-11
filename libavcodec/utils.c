@@ -1305,6 +1305,8 @@ int attribute_align_arg avcodec_open2(AVCodecContext *avctx, const AVCodec *code
         goto free_and_end;
     }
 
+    avctx->internal->skip_samples_multiplier = 1;
+
     if (codec->priv_data_size > 0) {
         if (!avctx->priv_data) {
             avctx->priv_data = av_mallocz(codec->priv_data_size);
@@ -2092,7 +2094,7 @@ static int64_t guess_correct_pts(AVCodecContext *ctx,
     return pts;
 }
 
-static int apply_param_change(AVCodecContext *avctx, AVPacket *avpkt)
+static int apply_param_change(AVCodecContext *avctx, const AVPacket *avpkt)
 {
     int size = 0, ret;
     const uint8_t *data;
@@ -2387,7 +2389,7 @@ int attribute_align_arg avcodec_decode_audio4(AVCodecContext *avctx,
 
         side= av_packet_get_side_data(avctx->internal->pkt, AV_PKT_DATA_SKIP_SAMPLES, &side_size);
         if(side && side_size>=10) {
-            avctx->internal->skip_samples = AV_RL32(side);
+            avctx->internal->skip_samples = AV_RL32(side) * avctx->internal->skip_samples_multiplier;
             discard_padding = AV_RL32(side + 4);
             av_log(avctx, AV_LOG_DEBUG, "skip %d / discard %d samples due to side data\n",
                    avctx->internal->skip_samples, (int)discard_padding);
@@ -2807,11 +2809,11 @@ static int do_decode(AVCodecContext *avctx, AVPacket *pkt)
     if (ret == AVERROR(EAGAIN))
         ret = pkt->size;
 
-    if (ret < 0)
-        return ret;
-
     if (avctx->internal->draining && !got_frame)
         avctx->internal->draining_done = 1;
+
+    if (ret < 0)
+        return ret;
 
     if (ret >= pkt->size) {
         av_packet_unref(avctx->internal->buffer_pkt);
@@ -3067,6 +3069,7 @@ av_cold int avcodec_close(AVCodecContext *avctx)
     avctx->nb_coded_side_data = 0;
 
     av_buffer_unref(&avctx->hw_frames_ctx);
+    av_buffer_unref(&avctx->hw_device_ctx);
 
     if (avctx->priv_data && avctx->codec && avctx->codec->priv_class)
         av_opt_free(avctx->priv_data);
