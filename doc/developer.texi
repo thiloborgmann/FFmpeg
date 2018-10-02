@@ -451,6 +451,70 @@ instead and point them in the right direction.
 Finally, keep in mind the immortal words of Bill and Ted,
 "Be excellent to each other."
 
+@chapter Community Committee
+
+The objective of the community committee is to sustain an environment as described
+by the code of conduct. It is to protect the dignity of each member of the community
+and to stop personal harassment of any kind. It is not to interfere with any other
+aspects of the development process.
+
+Further on it is only to act upon possible violations of the code of conduct if these
+incidents are brought up to its attention from directly involved parties of such an
+incident.
+
+With respect to these conditions, the committee is entitled to:
+
+@itemize
+@item
+    Address violations publically
+@item
+    Conduct a private hearing of involved parties
+@item
+    Temporarily or permanently ban individuals from the mailing lists and IRC channels
+@item
+    Temporarily or permanently cease commit rights for any project repository
+@end itemize
+
+It is up to the committee to decide in a case-to-case manner about which sanctions
+are suitable to apply in conformance with its entitlement given above.
+
+The committee will publically announce each and every decision upon incidents brought
+to its attention including sanctioning, if any, within one week after an incidents has
+been brought up to its attention.
+
+@subheading Committee members
+
+The community committee consists of three elected individuals. Committee members are
+elected for a period of one year and are automatically removed from the committee after
+that period. Reelection of committee members for the following period is possible.
+
+If for any reason a current member of the committee wishes to leave the committee a
+substitude committee member is to be elected for the remaining ongoing period. This
+vote is to be conducted in the same fashion as the annual vote about all committee members.
+
+@subheading Committee election
+
+The election of all committee members is conducted by the community.
+All community members that meet at least one of the following requirements are eligible to vote:
+
+@itemize
+@item
+    Having commit rights for any project repository
+@item
+    Being a maintainer as listed in @file{MAINTAINERS}
+@item
+    Being among the 100 most active contributors during the past year, determined by:
+    @code{some git magic | head -100}
+@end itemize
+
+The @uref{https://en.wikipedia.org/wiki/Schulze_method, Schulze Method} will be used to perform
+a condocrete election of the committee members.
+
+The vote has to implement a direct, free, equal and secret election.
+The results are to be publicly available.
+The election should be completed not later than the end of the ongoing period.
+Any community member can call on itself or any other person to be a candidate for an election.
+
 @anchor{Submitting patches}
 @chapter Submitting patches
 
