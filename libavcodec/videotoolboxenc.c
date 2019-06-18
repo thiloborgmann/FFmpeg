@@ -762,12 +762,17 @@ static int get_cv_pixel_format(AVCodecContext* avctx,
         *av_pixel_format = range == AVCOL_RANGE_JPEG ?
                                         kCVPixelFormatType_420YpCbCr8PlanarFullRange :
                                         kCVPixelFormatType_420YpCbCr8Planar;
-    } else if (fmt == AV_PIX_FMT_P010LE) {
+    }
+#if ((!TARGET_OS_IPHONE && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101300) || \
+     (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 110000))
+    else if (fmt == AV_PIX_FMT_P010LE) {
         *av_pixel_format = range == AVCOL_RANGE_JPEG ?
                                         kCVPixelFormatType_420YpCbCr10BiPlanarFullRange :
                                         kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
         *av_pixel_format = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-    } else {
+    }
+#endif
+    else {
         return AVERROR(EINVAL);
     }
 
@@ -1991,6 +1996,8 @@ static int get_cv_pixel_info(
         strides[2] = frame ? frame->linesize[2] : (avctx->width + 1) / 2;
         break;
 
+#if ((!TARGET_OS_IPHONE && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101300) || \
+     (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 110000))
     case AV_PIX_FMT_P010LE:
         *plane_count = 2;
         widths[0] = avctx->width;
@@ -2001,6 +2008,7 @@ static int get_cv_pixel_info(
         heights[1] = (avctx->height + 1) / 2;
         strides[1] = frame ? frame->linesize[1] : ((avctx->width + 1) / 2 + 63) & -64;
         break;
+#endif
 
     default:
         av_log(
@@ -2488,7 +2496,10 @@ static const enum AVPixelFormat hevc_pix_fmts[] = {
     AV_PIX_FMT_VIDEOTOOLBOX,
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_YUV420P,
+#if ((!TARGET_OS_IPHONE && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101300) || \
+     (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 110000))
     AV_PIX_FMT_P010LE,
+#endif
     AV_PIX_FMT_NONE
 };
 

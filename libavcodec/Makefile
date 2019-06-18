@@ -256,6 +256,8 @@ OBJS-$(CONFIG_COMFORTNOISE_ENCODER)    += cngenc.o
 OBJS-$(CONFIG_COOK_DECODER)            += cook.o
 OBJS-$(CONFIG_CPIA_DECODER)            += cpia.o
 OBJS-$(CONFIG_CSCD_DECODER)            += cscd.o
+OBJS-$(CONFIG_CYRLE_DECODER)           += cyrledec.o
+OBJS-$(CONFIG_CYRLE_ENCODER)           += cyrleenc.o
 OBJS-$(CONFIG_CYUV_DECODER)            += cyuv.o
 OBJS-$(CONFIG_DCA_DECODER)             += dcadec.o dca.o dcadata.o dcahuff.o \
                                           dca_core.o dca_exss.o dca_xll.o dca_lbr.o \
