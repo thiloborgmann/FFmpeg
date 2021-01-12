@@ -1,6 +1,7 @@
 # libavcodec tests
 # subsystems
 AVCODECOBJS-$(CONFIG_AUDIODSP)          += audiodsp.o
+AVCODECOBJS-$(CONFIG_ALSDSP)            += alsdsp.o
 AVCODECOBJS-$(CONFIG_BLOCKDSP)          += blockdsp.o
 AVCODECOBJS-$(CONFIG_BSWAPDSP)          += bswapdsp.o
 AVCODECOBJS-$(CONFIG_FLACDSP)           += flacdsp.o

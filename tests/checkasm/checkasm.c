@@ -80,6 +80,9 @@ static const struct {
     #if CONFIG_ALAC_DECODER
         { "alacdsp", checkasm_check_alacdsp },
     #endif
+    #if CONFIG_ALSDSP
+        { "alsdsp", checkasm_check_alsdsp },
+    #endif
     #if CONFIG_AUDIODSP
         { "audiodsp", checkasm_check_audiodsp },
     #endif

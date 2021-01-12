@@ -2345,6 +2345,7 @@ CONFIG_EXTRA="
     aandcttables
     ac3dsp
     adts_header
+    alsdsp
     atsc_a53
     audio_frame_queue
     audiodsp
@@ -2664,7 +2665,7 @@ adpcm_g722_decoder_select="g722dsp"
 adpcm_g722_encoder_select="g722dsp"
 aic_decoder_select="golomb idctdsp"
 alac_encoder_select="lpc"
-als_decoder_select="bswapdsp"
+als_decoder_select="bswapdsp alsdsp"
 amrnb_decoder_select="lsp"
 amrwb_decoder_select="lsp"
 amv_decoder_select="sp5x_decoder exif"

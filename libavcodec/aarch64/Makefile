@@ -1,4 +1,5 @@
 # subsystems
+OBJS-$(CONFIG_ALSDSP)                   += aarch64/alsdsp_init_aarch64.o
 OBJS-$(CONFIG_FFT)                      += aarch64/fft_init_aarch64.o
 OBJS-$(CONFIG_FMTCONVERT)               += aarch64/fmtconvert_init.o
 OBJS-$(CONFIG_H264CHROMA)               += aarch64/h264chroma_init_aarch64.o
@@ -52,6 +53,7 @@ NEON-OBJS-$(CONFIG_VP8DSP)              += aarch64/vp8dsp_neon.o
 
 # decoders/encoders
 NEON-OBJS-$(CONFIG_AAC_DECODER)         += aarch64/aacpsdsp_neon.o
+NEON-OBJS-$(CONFIG_ALS_DECODER)         += aarch64/alsdsp_neon.o
 NEON-OBJS-$(CONFIG_DCA_DECODER)         += aarch64/synth_filter_neon.o
 NEON-OBJS-$(CONFIG_OPUS_DECODER)        += aarch64/opusdsp_neon.o
 NEON-OBJS-$(CONFIG_VORBIS_DECODER)      += aarch64/vorbisdsp_neon.o
