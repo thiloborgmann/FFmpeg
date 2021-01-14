@@ -1003,10 +1003,6 @@ static int decode_var_block_data(ALSDecContext *ctx, ALSBlockData *bd)
 
 	dsp->reconstruct(raw_samples, lpc_cof, opt_order);
     }
-if (_cnt++ < 10) {
-raw_samples = bd->raw_samples + smp;
-av_log(NULL, AV_LOG_INFO, "raw: %i %i %i...\n", raw_samples[0], raw_samples[1], raw_samples[2]);
-}
     raw_samples = bd->raw_samples;
 
     // restore previous samples in case that they have been altered

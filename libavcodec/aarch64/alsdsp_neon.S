@@ -31,34 +31,89 @@
     }
 */
 
-function ff_alsdsp_reconstruct_neon, export = 1
+function ff_alsdsp_reconstruct_neon1, export = 1
         mov         x3, #1
         mov         v2.2D[0], x3
-        mov         v2.2D[1], x3
         shl         D2, D2, #19
 
-        mov         x6, #4
-        neg         x4, x2
-        mul         x4, x4, x6
+        mov         x6, #4 // size of one elem
+// ignore clobber
+        //neg         x2, x2
+        //mul         x2, x2, x6
+// shift away clobber
+        lsl         x2, x2, #32
+        neg         x2, x2, lsr #32
+        mul         x2, x2, x6 // count bytes for all elems intead of index
+//
 
-        add         x0, x0, x4
-        add         x1, x1, x4
+        add         x0, x0, x2
+        add         x1, x1, x2
 
+// single value madd
 1:      ld1         {v0.S}[0], [x0] , x6
         ld1         {v1.S}[0], [x1] , x6
 
         smull       v3.2D, v0.2S, v1.2S
         add         v2.2D, v2.2D, v3.2D
 
-        adds        x4, x4, x6
+        adds        x2, x2, x6
         b.lt        1b
 
-	shrn        v2.2S, v2.2D, #20
+        shrn        v2.2S, v2.2D, #20
 
         ld1         {v3.S}[0], [x0]
         sub         v3.2S, v3.2S, v2.2S
 
         st1         {v3.S}[0], [x0]
-        
+        ret
+endfunc
+
+
+function ff_alsdsp_reconstruct_neon, export = 1
+        mov         x3, #1
+        mov         v2.2D[0], x3
+        shl         D2, D2, #19
+
+        mov         x6, #4 // size of one elem
+// ignore clobber
+        //neg         x2, x2
+        //mul         x2, x2, x6
+// shift away clobber
+        lsl         x2, x2, #32
+        neg         x2, x2, lsr #32
+        mul         x2, x2, x6 // count bytes for all elems intead of index
+//
+        mov         x6, #8 // iterate by size of all elems read (two-values: 2*size of elem)
+
+        add         x0, x0, x2
+        add         x1, x1, x2
+
+
+// two-value madd
+1:      ld1         {v0.2S}, [x0] , x6
+        ld1         {v1.2S}, [x1] , x6
+
+        smull       v3.2D, v0.2S, v1.2S
+        add         v2.2D, v2.2D, v3.2D
+
+        adds        x2, x2, x6
+        b.lt        1b
+
+        mov         x4, v2.2D[0]
+
+        b.eq        2f
+        sub         v2.2D, v2.2D, v3.2D
+        sub         x0, x0, #4
+
+2:
+        mov         x5, v2.2D[1]
+
+        add         x4, x4, x5 
+        neg         x4, x4, asr #20
+
+        ldr         w6, [x0]
+        add         x6, x6, x4
+        str         w6, [x0]
+       
         ret
 endfunc

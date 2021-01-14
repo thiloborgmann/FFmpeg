@@ -27,7 +27,7 @@
 #include "libavutil/mem_internal.h"
 
 #define COEFFS_NUM 8
-#define BUF_SIZE (8*8)
+#define BUF_SIZE (8*8*4)
 
 #define randomize_buffers()                    \
     do {                                       \
@@ -45,23 +45,42 @@
 
 void checkasm_check_alsdsp(void)
 {
-    LOCAL_ALIGNED_16(uint8_t, ref_samples, [BUF_SIZE]);
-    LOCAL_ALIGNED_16(uint8_t, ref_coeffs,  [BUF_SIZE]);
-    LOCAL_ALIGNED_16(uint8_t, new_samples, [BUF_SIZE]);
-    LOCAL_ALIGNED_16(uint8_t, new_coeffs,  [BUF_SIZE]);
-
+    LOCAL_ALIGNED_16(uint32_t, ref_samples, [1024]);
+    LOCAL_ALIGNED_16(uint32_t, ref_coeffs,  [1024]);
+    LOCAL_ALIGNED_16(uint32_t, new_samples, [1024]);
+    LOCAL_ALIGNED_16(uint32_t, new_coeffs,  [1024]);
+/*
+	int32_t ref_samples[1024] = {0,};
+	int32_t ref_coeffs [1024] = {0,};
+	int32_t new_samples[1024] = {0,};
+	int32_t new_coeffs [1024] = {0,};
+	*/
     ALSDSPContext dsp;
     ff_alsdsp_init(&dsp);
 
     if (check_func(dsp.reconstruct, "als_reconstruct")) {
-	declare_func(void, int64_t **samples, int64_t **coeffs, unsigned int opt_order);
+	declare_func(void, int32_t *samples, int32_t *coeffs, unsigned int opt_order);
+int32_t *s, *c;
+unsigned int o = 9;
+//	randomize_buffers();
+        for (int i = 0; i < o+1; i++) {
+		ref_samples[i] = i;
+		ref_coeffs [i] = i;
+		new_samples[i] = i;
+		new_coeffs [i] = i;
+	}
 
-	randomize_buffers();
-	call_ref(ref_samples, ref_coeffs, 8);
-	call_new(new_samples, new_coeffs, 8);
-	if (memcmp(ref_samples, new_samples, BUF_SIZE) || memcmp(ref_coeffs, new_coeffs, BUF_SIZE))
+	s = (int32_t*)(ref_samples + o);
+	c = (int32_t*)(ref_coeffs + o);
+	call_ref(s, c, o);
+
+	s = (int32_t*)(new_samples + o);
+	c = (int32_t*)(new_coeffs + o);
+	call_new(s, c, o);
+
+	if (memcmp(ref_samples, new_samples, o+1) || memcmp(ref_coeffs, new_coeffs, o+1))
             fail();
-	bench_new(new_samples, new_coeffs, 8);
+	bench_new(new_samples, new_coeffs, o);
 
     }
     else av_log(NULL, AV_LOG_INFO, "!check_func\n");
