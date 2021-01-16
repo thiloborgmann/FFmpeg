@@ -69,6 +69,7 @@ function ff_alsdsp_reconstruct_neon1, export = 1
 endfunc
 
 
+//void ff_alsdsp_reconstruct_neon(int32_t *samples, int32_t *coeffs, unsigned int opt_order);
 function ff_alsdsp_reconstruct_neon, export = 1
         mov         x3, #1
         mov         v2.2D[0], x3
@@ -116,4 +117,76 @@ function ff_alsdsp_reconstruct_neon, export = 1
         str         w6, [x0]
        
         ret
+endfunc
+
+//void ff_alsdsp_reconstruct_all_neon(int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
+// x0: int32_t *samples
+// x1: int32_t *samples_end
+// x2: int32_t *coeffs
+// w3: unsigned int opt_order
+function ff_alsdsp_reconstruct_all_neon, export = 1
+// avoid 32-bit clubber from register
+    lsl         x3, x3, #32
+    lsr         x10, x3, #32
+    neg         x3, x3, lsr #32
+    mov         x11, #4
+    mul         x10, x10, x11
+
+// check for end of samples
+1:  cmp         x0, x1
+    b.eq        6f
+// local copies of x0, x2
+    sub         x4, x0, x10
+    sub         x5, x2, x10
+// reset local counter
+    mov         x6, x3
+// reset local acc
+    movi        v2.2D, #0
+    movi        v3.2D, #0
+
+// loop over 4 samples if >= 4 more to read
+    adds        x6, x6, #4
+    b.gt        3f
+
+2:  ld1		{v0.4S}, [x4], #16
+    ld1         {v1.4S}, [x5], #16
+
+    smlal       v2.2D, v0.2S, v1.2S
+    smlal2      v3.2D, v0.4S, v1.4S
+
+    adds        x6, x6, #4
+    b.le        2b
+
+// acc values into register
+3:  subs        x6, x6, #4 // x6 holds now how many to go.. -x
+
+    add         v2.2D, v2.2D, v3.2D
+    mov         x7, v2.2D[0]
+    mov         x8, v2.2D[1]
+    add         x7, x7, x8
+    b.eq        5f
+
+// loop over the remaining < 4 samples to read
+4:  ldr         x8, [x4], #4
+    ldr         x9, [x5], #4
+
+    madd        x7, x8, x9, x7
+    adds        x6, x6, #1
+    b.lt        4b
+
+// add 1<<19 and store X>>20
+5:  mov         x9, #1
+    lsl         x9, x9, #19
+    add         x7, x7, x9
+    neg         x7, x7, asr #20
+
+    ldr         w9, [x4]
+    add         x9, x9, x7
+    str         w9, [x4]    
+
+// increment samples and loop
+    add         x0, x0, #4
+    b           1b
+
+6:  ret
 endfunc

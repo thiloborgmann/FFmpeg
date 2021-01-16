@@ -36,12 +36,14 @@ void ff_ps_stereo_interpolate_ipdopd_neon(float (*l)[2], float (*r)[2],
 					  */
 
 void ff_alsdsp_reconstruct_neon(int32_t *samples, int32_t *coeffs, unsigned int opt_order);
+void ff_alsdsp_reconstruct_all_neon(int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
 
 av_cold void ff_alsdsp_init_neon(ALSDSPContext *s)
 {
     int cpu_flags = av_get_cpu_flags();
 
     if (have_neon(cpu_flags)) {
-        s->reconstruct           = ff_alsdsp_reconstruct_neon;
+        s->reconstruct     = ff_alsdsp_reconstruct_neon;
+        s->reconstruct_all = ff_alsdsp_reconstruct_all_neon;
     }
 }

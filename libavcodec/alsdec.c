@@ -990,19 +990,22 @@ static int decode_var_block_data(ALSDecContext *ctx, ALSBlockData *bd)
     // reconstruct raw samples
     raw_samples = bd->raw_samples + smp;
     lpc_cof     = lpc_cof_reversed + opt_order;
-
-    for (; raw_samples < raw_samples_end; raw_samples++) {
 /*
-        y = 1 << 19;
-
-        for (sb = -opt_order; sb < 0; sb++)
-            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
-
-        *raw_samples -= y >> 20;
-*/
+    for (; raw_samples < raw_samples_end; raw_samples++) {
+//
+//        y = 1 << 19;
+//   
+//        for (sb = -opt_order; sb < 0; sb++)
+//            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
+//   
+//        *raw_samples -= y >> 20;
+//
 
 	dsp->reconstruct(raw_samples, lpc_cof, opt_order);
     }
+    */
+    dsp->reconstruct_all(raw_samples, raw_samples_end, lpc_cof, opt_order);
+
     raw_samples = bd->raw_samples;
 
     // restore previous samples in case that they have been altered

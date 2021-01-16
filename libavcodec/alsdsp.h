@@ -24,28 +24,8 @@
 #include "libavutil/samplefmt.h"
 
 typedef struct ALSDSPContext {
-/*    void (*decorrelate[4])(uint8_t **out, int32_t **in, int channels,
-                           int len, int shift);
-    void (*lpc16)(int32_t *samples, const int coeffs[32], int order,
-                  int qlevel, int len);
-    void (*lpc32)(int32_t *samples, const int coeffs[32], int order,
-                  int qlevel, int len);
-    void (*lpc16_encode)(int32_t *res, const int32_t *smp, int len, int order,
-                         const int32_t coefs[32], int shift);
-    void (*lpc32_encode)(int32_t *res, const int32_t *smp, int len, int order,
-                         const int32_t coefs[32], int shift);
-			 */
-/*      
-        y = 1 << 19;
-
-        for (sb = -opt_order; sb < 0; sb++)
-            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
-
-        *raw_samples -= y >> 20;
-*/
-
 	void (*reconstruct)(int32_t *raw_samples, int32_t *lpc_cof, unsigned int opt_order);
-//        dsp->reconstruct(raw_samples, lpc_cof, opt_order);
+	void (*reconstruct_all)(int32_t *raw_samples, int32_t *raw_samples_end, int32_t *lpc_cof, unsigned int opt_order);
 } ALSDSPContext;
 
 void ff_alsdsp_init(ALSDSPContext *c);//, enum AVSampleFormat fmt, int channels, int bps);
