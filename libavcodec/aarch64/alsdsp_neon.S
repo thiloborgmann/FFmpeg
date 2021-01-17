@@ -127,17 +127,16 @@ endfunc
 function ff_alsdsp_reconstruct_all_neon, export = 1
 // avoid 32-bit clubber from register
     lsl         x3, x3, #32
-    lsr         x10, x3, #32
     neg         x3, x3, lsr #32
-    mov         x11, #4
-    mul         x10, x10, x11
+    mov         x10, #4
+    mul         x10, x10, x3
 
 // check for end of samples
 1:  cmp         x0, x1
     b.eq        6f
 // local copies of x0, x2
-    sub         x4, x0, x10 // add x3 * x11...
-    sub         x5, x2, x10
+    add         x4, x0, x10
+    add         x5, x2, x10
 // reset local counter
     mov         x6, x3
 // reset local acc
@@ -167,12 +166,8 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     b.eq        5f
 
 // loop over the remaining < 4 samples to read
-4:  ldr         x8, [x4], #4
-    ldr         x9, [x5], #4
-    lsl         x8, x8, #32
-    asr         x8, x8, #32
-    lsl         x9, x9, #32
-    asr         x9, x9, #32
+4:  ldrsw       x8, [x4], #4
+    ldrsw       x9, [x5], #4
 
     madd        x7, x8, x9, x7
     adds        x6, x6, #1
@@ -184,9 +179,7 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     add         x7, x7, x9
     neg         x7, x7, asr #20
 
-    ldr         w9, [x4]
-    lsl         x9, x9, #32
-    asr         x9, x9, #32
+    ldrsh       w9, [x4]
     add         x9, x9, x7
     str         w9, [x4]    
 
