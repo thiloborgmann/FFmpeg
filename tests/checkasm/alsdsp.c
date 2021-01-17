@@ -26,13 +26,13 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mem_internal.h"
 
-#define COEFFS_NUM 8
-#define BUF_SIZE (8*8*4)
+#define NUM 1024
+#define BUF_SIZE (1024 * 4)
 
 #define randomize_buffers()                    \
     do {                                       \
         int i;                                 \
-        for (i = 0; i < COEFFS_NUM*2; i += 4) {  \
+        for (i = 0; i < NUM; i++) {  \
                 uint32_t r = rnd();            \
                 AV_WN32A(&ref_coeffs[i], r);    \
                 AV_WN32A(&new_coeffs[i], r);    \
@@ -58,12 +58,12 @@ void checkasm_check_alsdsp(void)
     ALSDSPContext dsp;
     ff_alsdsp_init(&dsp);
 
-    if (check_func(dsp.reconstruct, "als_reconstruct")) {
-	declare_func(void, int32_t *samples, int32_t *coeffs, unsigned int opt_order);
-int32_t *s, *c;
+    if (check_func(dsp.reconstruct_all, "als_reconstruct_all")) {
+	declare_func(void, int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
+int32_t *s, *c, *e;
 unsigned int o = 9;
 //	randomize_buffers();
-        for (int i = 0; i < o+1; i++) {
+        for (int i = 0; i < 1024; i++) {
 		ref_samples[i] = i;
 		ref_coeffs [i] = i;
 		new_samples[i] = i;
@@ -71,16 +71,18 @@ unsigned int o = 9;
 	}
 
 	s = (int32_t*)(ref_samples + o);
+        e = (int32_t*)(ref_samples + 1024);
 	c = (int32_t*)(ref_coeffs + o);
-	call_ref(s, c, o);
+	call_ref(s, e, c, o);
 
 	s = (int32_t*)(new_samples + o);
+        e = (int32_t*)(new_samples + 1024);
 	c = (int32_t*)(new_coeffs + o);
-	call_new(s, c, o);
+	call_new(s, e, c, o);
 
 	if (memcmp(ref_samples, new_samples, o+1) || memcmp(ref_coeffs, new_coeffs, o+1))
             fail();
-	bench_new(new_samples, new_coeffs, o);
+	bench_new(new_samples, e, new_coeffs, o);
 
     }
     else av_log(NULL, AV_LOG_INFO, "!check_func\n");
