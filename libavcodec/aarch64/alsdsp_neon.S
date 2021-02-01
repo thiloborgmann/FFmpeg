@@ -128,58 +128,91 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
 // avoid 32-bit clubber from register
     lsl         x3, x3, #32
     neg         x3, x3, lsr #32
-    mov         x10, #4
-    mul         x10, x10, x3
+// x10 counts the bytes left to read, set to 4 * -opt_order
+    lsl         x10, x3, #2
 
+// loop over samples value by value
 // check for end of samples
 1:  cmp         x0, x1
-    b.eq        6f
-// local copies of x0, x2
+    b.eq        8f
+
+// local copies of x0, x2: samples-opt_order, coeffs-opt_order
     add         x4, x0, x10
     add         x5, x2, x10
-// reset local counter
+// reset local counter: count -opt_order .. 0
     mov         x6, x3
+
 // reset local acc
-    movi        v2.2D, #0
-    movi        v3.2D, #0
+//    movi        v2.2D, #0
+//    movi        v3.2D, #0
+
+//
+    movi        v4.2D, #0
+    movi        v5.2D, #0
+    movi        v6.2D, #0
+    movi        v7.2D, #0
+
+// loop over 8 samples if >= 8 more to read
+    adds        x6, x6, #8
+    b.gt        3f
+
+2:  ld1		{v0.4S - v1.4S}, [x4], #32
+    ld1         {v2.4S - v3.4S}, [x5], #32
+
+    smlal       v4.2D, v0.2S, v2.2S
+    smlal2      v5.2D, v0.4S, v2.4S
+    smlal       v6.2D, v1.2S, v3.2S
+    smlal2      v7.2D, v1.4S, v3.4S
+
+    adds        x6, x6, #8
+    b.le        2b
+
+// reduce to two NEON registers
+// acc values into register
+3:  subs        x6, x6, #8 // x6 holds now how many to go.. -x
+    
+    add         v2.2D, v4.2D, v5.2D
+    add         v3.2D, v6.2D, v7.2D
 
 // loop over 4 samples if >= 4 more to read
     adds        x6, x6, #4
-    b.gt        3f
+    b.gt        5f
 
-2:  ld1		{v0.4S}, [x4], #16
+4:  ld1		{v0.4S}, [x4], #16
     ld1         {v1.4S}, [x5], #16
 
     smlal       v2.2D, v0.2S, v1.2S
     smlal2      v3.2D, v0.4S, v1.4S
 
     adds        x6, x6, #4
-    b.le        2b
+    b.le        4b
 
+// reduce to A64 registers
 // acc values into register
-3:  subs        x6, x6, #4 // x6 holds now how many to go.. -x
+5:  subs        x6, x6, #4 // x6 holds now how many to go.. -x
 
     add         v2.2D, v2.2D, v3.2D
     mov         x7, v2.2D[0]
     mov         x8, v2.2D[1]
     add         x7, x7, x8
-    b.eq        5f
+    b.eq        7f
 
 // loop over the remaining < 4 samples to read
-4:  ldrsw       x8, [x4], #4
+6:  ldrsw       x8, [x4], #4
     ldrsw       x9, [x5], #4
 
     madd        x7, x8, x9, x7
     adds        x6, x6, #1
-    b.lt        4b
+    b.lt        6b
 
-// add 1<<19 and store X>>20
-5:  mov         x9, #1
+// add 1<<19 and store s-=X>>20
+7:  mov         x9, #1
     lsl         x9, x9, #19
     add         x7, x7, x9
     neg         x7, x7, asr #20
 
-    ldrsh       w9, [x4]
+    //ldrsh       w9, [x4]
+    ldrsw       x9, [x4]
     add         x9, x9, x7
     str         w9, [x4]    
 
@@ -187,5 +220,5 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     add         x0, x0, #4
     b           1b
 
-6:  ret
+8:  ret
 endfunc

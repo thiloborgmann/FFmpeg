@@ -86,7 +86,7 @@ unsigned int o = 9;
 
     }
     else av_log(NULL, AV_LOG_INFO, "!check_func\n");
-    report("reconstruct"); // gets called
+    report("reconstruct_all"); // gets called
 }
 /*
 #define BUF_SIZE 256
