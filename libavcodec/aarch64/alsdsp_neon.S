@@ -58,7 +58,7 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     adds        x6, x6, #16
     b.gt        3f
 
-2:  ld1		{v0.4s - v3.4s}, [x4], #64
+2:  ld1         {v0.4s - v3.4s}, [x4], #64
     ld1         {v4.4s - v7.4s}, [x5], #64
 
     smlal       v8.2d,  v0.2s, v4.2s
@@ -76,7 +76,7 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
 // reduce to four NEON registers
 // acc values into register
 3:  subs        x6, x6, #16
-    
+
     add         v4.2d, v8.2d,  v9.2d
     add         v5.2d, v10.2d, v11.2d
     add         v6.2d, v12.2d, v13.2d
@@ -86,7 +86,7 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     cmn         x6, #8
     b.gt        3f
 
-    ld1		{v0.4s - v1.4s}, [x4], #32
+    ld1         {v0.4s - v1.4s}, [x4], #32
     ld1         {v2.4s - v3.4s}, [x5], #32
 
     smlal       v4.2d, v0.2s, v2.2s
@@ -105,7 +105,7 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     cmn         x6, #4
     b.gt        3f
 
-    ld1		{v0.4s}, [x4], #16
+    ld1         {v0.4s}, [x4], #16
     ld1         {v1.4s}, [x5], #16
 
     smlal       v2.2d, v0.2s, v1.2s
@@ -139,7 +139,7 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
 
     ldrsw       x9, [x4]
     add         x9, x9, x7
-    str         w9, [x4]    
+    str         w9, [x4]
 
 // increment samples and loop
     add         x0, x0, #4
