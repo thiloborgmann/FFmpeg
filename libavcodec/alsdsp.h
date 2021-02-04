@@ -24,7 +24,6 @@
 #include "libavutil/samplefmt.h"
 
 typedef struct ALSDSPContext {
-	void (*reconstruct)(int32_t *raw_samples, int32_t *lpc_cof, unsigned int opt_order);
 	void (*reconstruct_all)(int32_t *raw_samples, int32_t *raw_samples_end, int32_t *lpc_cof, unsigned int opt_order);
 } ALSDSPContext;
 

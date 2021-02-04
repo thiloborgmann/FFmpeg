@@ -17,107 +17,7 @@
  */
 
 #include "libavutil/aarch64/asm.S"
-/*    for (; raw_samples < raw_samples_end; raw_samples++) {
-
-//        y = 1 << 19;
-//
-//        for (sb = -opt_order; sb < 0; sb++)
-//            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
-//
-//        *raw_samples -= y >> 20;
-
-
-        dsp->reconstruct(raw_samples, lpc_cof, opt_order);
-    }
-*/
-
-function ff_alsdsp_reconstruct_neon1, export = 1
-        mov         x3, #1
-        mov         v2.2D[0], x3
-        shl         D2, D2, #19
-
-        mov         x6, #4 // size of one elem
-// ignore clobber
-        //neg         x2, x2
-        //mul         x2, x2, x6
-// shift away clobber
-        lsl         x2, x2, #32
-        neg         x2, x2, lsr #32
-        mul         x2, x2, x6 // count bytes for all elems intead of index
-//
-
-        add         x0, x0, x2
-        add         x1, x1, x2
-
-// single value madd
-1:      ld1         {v0.S}[0], [x0] , x6
-        ld1         {v1.S}[0], [x1] , x6
-
-        smull       v3.2D, v0.2S, v1.2S
-        add         v2.2D, v2.2D, v3.2D
-
-        adds        x2, x2, x6
-        b.lt        1b
-
-        shrn        v2.2S, v2.2D, #20
-
-        ld1         {v3.S}[0], [x0]
-        sub         v3.2S, v3.2S, v2.2S
-
-        st1         {v3.S}[0], [x0]
-        ret
-endfunc
-
-
-//void ff_alsdsp_reconstruct_neon(int32_t *samples, int32_t *coeffs, unsigned int opt_order);
-function ff_alsdsp_reconstruct_neon, export = 1
-        mov         x3, #1
-        mov         v2.2D[0], x3
-        shl         D2, D2, #19
-
-        mov         x6, #4 // size of one elem
-// ignore clobber
-        //neg         x2, x2
-        //mul         x2, x2, x6
-// shift away clobber
-        lsl         x2, x2, #32
-        neg         x2, x2, lsr #32
-        mul         x2, x2, x6 // count bytes for all elems intead of index
-//
-        mov         x6, #8 // iterate by size of all elems read (two-values: 2*size of elem)
-
-        add         x0, x0, x2
-        add         x1, x1, x2
-
-
-// two-value madd
-1:      ld1         {v0.2S}, [x0] , x6
-        ld1         {v1.2S}, [x1] , x6
-
-        smull       v3.2D, v0.2S, v1.2S
-        add         v2.2D, v2.2D, v3.2D
-
-        adds        x2, x2, x6
-        b.lt        1b
-
-        mov         x4, v2.2D[0]
-
-        b.eq        2f
-        sub         v2.2D, v2.2D, v3.2D
-        sub         x0, x0, #4
-
-2:
-        mov         x5, v2.2D[1]
-
-        add         x4, x4, x5 
-        neg         x4, x4, asr #20
-
-        ldr         w6, [x0]
-        add         x6, x6, x4
-        str         w6, [x0]
-       
-        ret
-endfunc
+#include "neon.S"
 
 //void ff_alsdsp_reconstruct_all_neon(int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
 // x0: int32_t *samples
@@ -125,93 +25,118 @@ endfunc
 // x2: int32_t *coeffs
 // w3: unsigned int opt_order
 function ff_alsdsp_reconstruct_all_neon, export = 1
+    sub         sp, sp, #128
+    st1         {v8.4s  - v11.4s}, [sp], #64
+    st1         {v12.4s - v15.4s}, [sp], #64
 // avoid 32-bit clubber from register
     lsl         x3, x3, #32
     neg         x3, x3, lsr #32
 // x10 counts the bytes left to read, set to 4 * -opt_order
     lsl         x10, x3, #2
 
-// loop over samples value by value
-// check for end of samples
+// loop x0 .. x1
 1:  cmp         x0, x1
-    b.eq        8f
+    b.eq        4f
 
-// local copies of x0, x2: samples-opt_order, coeffs-opt_order
+// samples - opt_order, coeffs - opt_order
     add         x4, x0, x10
     add         x5, x2, x10
 // reset local counter: count -opt_order .. 0
     mov         x6, x3
 
 // reset local acc
-//    movi        v2.2D, #0
-//    movi        v3.2D, #0
+    movi        v8.2d,  #0
+    movi        v9.2d,  #0
+    movi        v10.2d, #0
+    movi        v11.2d, #0
+    movi        v12.2d, #0
+    movi        v13.2d, #0
+    movi        v14.2d, #0
+    movi        v15.2d, #0
 
-//
-    movi        v4.2D, #0
-    movi        v5.2D, #0
-    movi        v6.2D, #0
-    movi        v7.2D, #0
-
-// loop over 8 samples if >= 8 more to read
-    adds        x6, x6, #8
+// loop over 16 samples while >= 16 more to read
+    adds        x6, x6, #16
     b.gt        3f
 
-2:  ld1		{v0.4S - v1.4S}, [x4], #32
-    ld1         {v2.4S - v3.4S}, [x5], #32
+2:  ld1		{v0.4s - v3.4s}, [x4], #64
+    ld1         {v4.4s - v7.4s}, [x5], #64
 
-    smlal       v4.2D, v0.2S, v2.2S
-    smlal2      v5.2D, v0.4S, v2.4S
-    smlal       v6.2D, v1.2S, v3.2S
-    smlal2      v7.2D, v1.4S, v3.4S
+    smlal       v8.2d,  v0.2s, v4.2s
+    smlal2      v9.2d,  v0.4s, v4.4s
+    smlal       v10.2d, v1.2s, v5.2s
+    smlal2      v11.2d, v1.4s, v5.4s
+    smlal       v12.2d, v2.2s, v6.2s
+    smlal2      v13.2d, v2.4s, v6.4s
+    smlal       v14.2d, v3.2s, v7.2s
+    smlal2      v15.2d, v3.4s, v7.4s
+
+    adds        x6, x6, #16
+    b.le        2b
+
+// reduce to four NEON registers
+// acc values into register
+3:  subs        x6, x6, #16
+    
+    add         v4.2d, v8.2d,  v9.2d
+    add         v5.2d, v10.2d, v11.2d
+    add         v6.2d, v12.2d, v13.2d
+    add         v7.2d, v14.2d, v15.2d
+
+// next 8 samples
+    cmn         x6, #8
+    b.gt        3f
+
+    ld1		{v0.4s - v1.4s}, [x4], #32
+    ld1         {v2.4s - v3.4s}, [x5], #32
+
+    smlal       v4.2d, v0.2s, v2.2s
+    smlal2      v5.2d, v0.4s, v2.4s
+    smlal       v6.2d, v1.2s, v3.2s
+    smlal2      v7.2d, v1.4s, v3.4s
 
     adds        x6, x6, #8
-    b.le        2b
 
 // reduce to two NEON registers
 // acc values into register
-3:  subs        x6, x6, #8 // x6 holds now how many to go.. -x
-    
-    add         v2.2D, v4.2D, v5.2D
-    add         v3.2D, v6.2D, v7.2D
+3:  add         v2.2d, v4.2d, v5.2d
+    add         v3.2d, v6.2d, v7.2d
 
-// loop over 4 samples if >= 4 more to read
-    adds        x6, x6, #4
-    b.gt        5f
+// next 4 samples
+    cmn         x6, #4
+    b.gt        3f
 
-4:  ld1		{v0.4S}, [x4], #16
-    ld1         {v1.4S}, [x5], #16
+    ld1		{v0.4s}, [x4], #16
+    ld1         {v1.4s}, [x5], #16
 
-    smlal       v2.2D, v0.2S, v1.2S
-    smlal2      v3.2D, v0.4S, v1.4S
+    smlal       v2.2d, v0.2s, v1.2s
+    smlal2      v3.2d, v0.4s, v1.4s
 
     adds        x6, x6, #4
-    b.le        4b
 
 // reduce to A64 registers
 // acc values into register
-5:  subs        x6, x6, #4 // x6 holds now how many to go.. -x
-
-    add         v2.2D, v2.2D, v3.2D
-    mov         x7, v2.2D[0]
-    mov         x8, v2.2D[1]
+3:  add         v2.2d, v2.2d, v3.2d
+    mov         x7, v2.2d[0]
+    mov         x8, v2.2d[1]
     add         x7, x7, x8
-    b.eq        7f
+
+    cmn         x6, #0
+    b.eq        3f
 
 // loop over the remaining < 4 samples to read
-6:  ldrsw       x8, [x4], #4
+2:  ldrsw       x8, [x4], #4
     ldrsw       x9, [x5], #4
 
     madd        x7, x8, x9, x7
     adds        x6, x6, #1
-    b.lt        6b
+    b.lt        2b
 
 // add 1<<19 and store s-=X>>20
-7:  mov         x9, #1
+3:  mov         x9, #1
     lsl         x9, x9, #19
     add         x7, x7, x9
     neg         x7, x7, asr #20
 
-    //ldrsh       w9, [x4]
     ldrsw       x9, [x4]
     add         x9, x9, x7
     str         w9, [x4]    
@@ -220,5 +145,9 @@ function ff_alsdsp_reconstruct_all_neon, export = 1
     add         x0, x0, #4
     b           1b
 
-8:  ret
+4:  sub         sp, sp, #128
+    ld1         {v8.4s  - v11.4s}, [sp], #64
+    ld1         {v12.4s - v15.4s}, [sp], #64
+
+    ret
 endfunc

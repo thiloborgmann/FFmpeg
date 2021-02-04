@@ -62,6 +62,12 @@ void checkasm_check_alsdsp(void)
 	declare_func(void, int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
 int32_t *s, *c, *e;
 unsigned int o = 9;
+unsigned int O[] = { 9, 8, 7,
+                     12, 13, 14,
+                     15, 16, 17};
+//for (int k = 1; k < 330; k++) {
+//o = O[k];
+o = 9;
 //	randomize_buffers();
         for (int i = 0; i < 1024; i++) {
 		ref_samples[i] = i;
@@ -83,7 +89,7 @@ unsigned int o = 9;
 	if (memcmp(ref_samples, new_samples, o+1) || memcmp(ref_coeffs, new_coeffs, o+1))
             fail();
 	bench_new(new_samples, e, new_coeffs, o);
-
+//}
     }
     else av_log(NULL, AV_LOG_INFO, "!check_func\n");
     report("reconstruct_all"); // gets called

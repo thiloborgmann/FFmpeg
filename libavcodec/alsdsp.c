@@ -24,18 +24,6 @@
 #include "alsdsp.h"
 #include "config.h"
 
-static void als_reconstruct_c(int32_t *raw_samples, int32_t *lpc_cof, unsigned int opt_order)
-{
-	int64_t y;
-	int sb;
-
-        y = 1 << 19;
-        for (sb = -opt_order; sb < 0; sb++)
-            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
-
-        *raw_samples -= y >> 20;
-}
-
 static void als_reconstruct_all_c(int32_t *raw_samples, int32_t *raw_samples_end, int32_t *lpc_cof, unsigned int opt_order)
 {
 	int64_t y;
@@ -54,7 +42,6 @@ static void als_reconstruct_all_c(int32_t *raw_samples, int32_t *raw_samples_end
 
 av_cold void ff_alsdsp_init(ALSDSPContext *ctx)
 {
-    ctx->reconstruct     = als_reconstruct_c;
     ctx->reconstruct_all = als_reconstruct_all_c;
 
     if (ARCH_AARCH64)
