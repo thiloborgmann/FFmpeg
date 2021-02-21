@@ -32,6 +32,7 @@
 #include "unary.h"
 #include "mpeg4audio.h"
 #include "bgmc.h"
+#include "alsdsp.h"
 #include "bswapdsp.h"
 #include "internal.h"
 #include "mlz.h"
@@ -195,6 +196,7 @@ typedef struct ALSDecContext {
     AVCodecContext *avctx;
     ALSSpecificConfig sconf;
     GetBitContext gb;
+    ALSDSPContext dsp;
     BswapDSPContext bdsp;
     const AVCRC *crc_table;
     uint32_t crc_org;               ///< CRC value of the original input data
@@ -900,9 +902,11 @@ static int read_var_block_data(ALSDecContext *ctx, ALSBlockData *bd)
 
 /** Decode the block data for a non-constant block
  */
+int _cnt = 0;
 static int decode_var_block_data(ALSDecContext *ctx, ALSBlockData *bd)
 {
     ALSSpecificConfig *sconf = &ctx->sconf;
+    ALSDSPContext *dsp = &ctx->dsp;
     unsigned int block_length = bd->block_length;
     unsigned int smp = 0;
     unsigned int k;
@@ -986,15 +990,21 @@ static int decode_var_block_data(ALSDecContext *ctx, ALSBlockData *bd)
     // reconstruct raw samples
     raw_samples = bd->raw_samples + smp;
     lpc_cof     = lpc_cof_reversed + opt_order;
-
+/*
     for (; raw_samples < raw_samples_end; raw_samples++) {
-        y = 1 << 19;
+//
+//        y = 1 << 19;
+//   
+//        for (sb = -opt_order; sb < 0; sb++)
+//            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
+//   
+//        *raw_samples -= y >> 20;
+//
 
-        for (sb = -opt_order; sb < 0; sb++)
-            y += (uint64_t)MUL64(lpc_cof[sb], raw_samples[sb]);
-
-        *raw_samples -= y >> 20;
+	dsp->reconstruct(raw_samples, lpc_cof, opt_order);
     }
+    */
+    dsp->reconstruct_all(raw_samples, raw_samples_end, lpc_cof, opt_order);
 
     raw_samples = bd->raw_samples;
 
@@ -2150,6 +2160,7 @@ static av_cold int decode_init(AVCodecContext *avctx)
         }
     }
 
+    ff_alsdsp_init(&ctx->dsp);
     ff_bswapdsp_init(&ctx->bdsp);
 
     return 0;
