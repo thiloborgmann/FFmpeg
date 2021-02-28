@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 James Almer
+ * Copyright (c) 2021 Thilo Borgmann <thilo.borgmann _at_ mail.de>
  *
  * This file is part of FFmpeg.
  *
@@ -27,7 +27,7 @@
 #include "libavutil/mem_internal.h"
 
 #define NUM 1024
-#define BUF_SIZE (1024 * 4)
+//#define BUF_SIZE (1024 * 4)
 
 #define randomize_buffers()                    \
     do {                                       \
@@ -61,20 +61,20 @@ void checkasm_check_alsdsp(void)
     if (check_func(dsp.reconstruct_all, "als_reconstruct_all")) {
 	declare_func(void, int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
 int32_t *s, *c, *e;
-unsigned int o = 9;
+unsigned int o;
 unsigned int O[] = { 9, 8, 7,
                      12, 13, 14,
                      15, 16, 17};
-//for (int k = 1; k < 330; k++) {
-//o = O[k];
-o = 9;
-//	randomize_buffers();
-        for (int i = 0; i < 1024; i++) {
+for (int k = 0; k < 9; k++) {
+o = O[k];
+//o = 9;
+	randomize_buffers();
+       /* for (int i = 0; i < 1024; i++) {
 		ref_samples[i] = i;
 		ref_coeffs [i] = i;
 		new_samples[i] = i;
 		new_coeffs [i] = i;
-	}
+	}*/
 
 	s = (int32_t*)(ref_samples + o);
         e = (int32_t*)(ref_samples + 1024);
@@ -89,7 +89,7 @@ o = 9;
 	if (memcmp(ref_samples, new_samples, o+1) || memcmp(ref_coeffs, new_coeffs, o+1))
             fail();
 	bench_new(new_samples, e, new_coeffs, o);
-//}
+}
     }
     else av_log(NULL, AV_LOG_INFO, "!check_func\n");
     report("reconstruct_all"); // gets called

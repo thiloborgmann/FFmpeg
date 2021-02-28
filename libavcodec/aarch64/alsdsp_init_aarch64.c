@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2021 Thilo Borgmann <thilo.borgmann _at_ mail.de>
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -20,20 +22,6 @@
 
 #include "libavutil/aarch64/cpu.h"
 #include "libavcodec/alsdsp.h"
-/*
-void ff_ps_add_squares_neon(float *dst, const float (*src)[2], int n);
-void ff_ps_mul_pair_single_neon(float (*dst)[2], float (*src0)[2],
-                                float *src1, int n);
-void ff_ps_hybrid_analysis_neon(float (*out)[2], float (*in)[2],
-                                const float (*filter)[8][2],
-                                ptrdiff_t stride, int n);
-void ff_ps_stereo_interpolate_neon(float (*l)[2], float (*r)[2],
-                                   float h[2][4], float h_step[2][4],
-                                   int len);
-void ff_ps_stereo_interpolate_ipdopd_neon(float (*l)[2], float (*r)[2],
-                                          float h[2][4], float h_step[2][4],
-                                          int len);
-					  */
 
 void ff_alsdsp_reconstruct_all_neon(int32_t *samples, int32_t *samples_end, int32_t *coeffs, unsigned int opt_order);
 

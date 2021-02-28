@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2021 Thilo Borgmann <thilo.borgmann _at_ mail.de>
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -27,7 +29,7 @@ typedef struct ALSDSPContext {
 	void (*reconstruct_all)(int32_t *raw_samples, int32_t *raw_samples_end, int32_t *lpc_cof, unsigned int opt_order);
 } ALSDSPContext;
 
-void ff_alsdsp_init(ALSDSPContext *c);//, enum AVSampleFormat fmt, int channels, int bps);
-void ff_alsdsp_init_neon(ALSDSPContext *c);//, enum AVSampleFormat fmt, int channels, int bps);
+void ff_alsdsp_init(ALSDSPContext *c);
+void ff_alsdsp_init_neon(ALSDSPContext *c);
 
 #endif /* AVCODEC_ALSDSP_H */

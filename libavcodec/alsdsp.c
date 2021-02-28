@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 Mans Rullgard <mans@mansr.com>
+ * Copyright (c) 2021 Thilo Borgmann <thilo.borgmann _at_ mail.de>
  *
  * This file is part of FFmpeg.
  *

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2021 Thilo Borgmann <thilo.borgmann _at_ mail.de>
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
