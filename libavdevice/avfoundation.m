@@ -736,7 +736,6 @@ static int get_audio_config(AVFormatContext *s)
         return 1;
     }
 
-    if (ctx->audio_non_interleaved) {
         CMBlockBufferRef block_buffer = CMSampleBufferGetDataBuffer(ctx->current_audio_frame);
         ctx->audio_buffer_size        = CMBlockBufferGetDataLength(block_buffer);
         ctx->audio_buffer             = av_malloc(ctx->audio_buffer_size);
@@ -744,7 +743,6 @@ static int get_audio_config(AVFormatContext *s)
             av_log(s, AV_LOG_ERROR, "error allocating audio buffer\n");
             return 1;
         }
-    }
 
     CFRelease(ctx->current_audio_frame);
     ctx->current_audio_frame = nil;
@@ -1103,12 +1101,24 @@ static int avf_read_packet(AVFormatContext *s, AVPacket *pkt)
             CMBlockBufferRef block_buffer = CMSampleBufferGetDataBuffer(ctx->current_audio_frame);
             int block_buffer_size         = CMBlockBufferGetDataLength(block_buffer);
 
+            CMFormatDescriptionRef format_desc      = CMSampleBufferGetFormatDescription(ctx->current_audio_frame);
+            AudioStreamBasicDescription *basic_desc = CMAudioFormatDescriptionGetStreamBasicDescription(format_desc);
+
             if (!block_buffer || !block_buffer_size) {
                 return AVERROR(EIO);
             }
 
-            if (ctx->audio_non_interleaved && block_buffer_size > ctx->audio_buffer_size) {
-                return AVERROR_BUFFER_TOO_SMALL;
+            if (basic_desc) {
+                ctx->audio_non_interleaved = basic_desc->mFormatFlags & kAudioFormatFlagIsNonInterleaved;
+            }
+
+            if (block_buffer_size > ctx->audio_buffer_size) {
+                ctx->audio_buffer_size = block_buffer_size;
+                ctx->audio_buffer      = av_realloc(ctx->audio_buffer, block_buffer_size);
+                if (!ctx->audio_buffer) {
+                    av_log(s, AV_LOG_ERROR, "error allocating audio buffer\n");
+                    return 1;
+                }
             }
 
             if (av_new_packet(pkt, block_buffer_size) < 0) {
