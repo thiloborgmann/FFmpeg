@@ -15726,6 +15726,36 @@ Interpolate values using the spline interpolation.
 
 This filter supports the all above options as @ref{commands}.
 
+@anchor{jerkdetect}
+@section jerkdetect
+
+Determines jerkiness of frames without altering the input frames.
+
+Based on ?
+
+The filter accepts the following options:
+
+@table @option
+@item period_min
+@item period_max
+Set minimum and maximum values for determining pixel grids (periods).
+Default values are [3,24].
+
+@item planes
+Set planes to filter. Default is first only.
+@end table
+
+@subsection Examples
+
+@itemize
+@item
+Determine jerkiness for the first plane and search for periods within [8,32]:
+@example
+jerkdetect=period_min=8:period_max=32:planes=1
+@end example
+@end itemize
+
+
 @anchor{lut3d}
 @section lut3d
 

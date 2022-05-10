@@ -314,6 +314,7 @@ extern const AVFilter ff_vf_il;
 extern const AVFilter ff_vf_inflate;
 extern const AVFilter ff_vf_interlace;
 extern const AVFilter ff_vf_interleave;
+extern const AVFilter ff_vf_jerkdetect;
 extern const AVFilter ff_vf_kerndeint;
 extern const AVFilter ff_vf_kirsch;
 extern const AVFilter ff_vf_lagfun;
