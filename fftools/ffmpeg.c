@@ -668,6 +668,8 @@ static void close_output_stream(OutputStream *ost)
 
     if (ost->sq_idx_encode >= 0)
         sq_send(of->sq_encode, ost->sq_idx_encode, SQFRAME(NULL));
+    if (ost->dec)
+        av_thread_message_queue_set_err_recv(ost->dec, AVERROR_EOF);
 }
 
 static int check_recording_time(OutputStream *ost, int64_t ts, AVRational tb)
@@ -1352,6 +1354,74 @@ static void do_video_out(OutputFile *of,
         av_frame_move_ref(ost->last_frame, next_picture);
 }
 
+static int ifilter_parameters_from_codecpar(InputFilter *ifilter, AVCodecParameters *par)
+{
+    int ret;
+
+    // We never got any input. Set a fake format, which will
+    // come from libavformat.
+    ifilter->format                 = par->format;
+    ifilter->sample_rate            = par->sample_rate;
+    ifilter->width                  = par->width;
+    ifilter->height                 = par->height;
+    ifilter->sample_aspect_ratio    = par->sample_aspect_ratio;
+    ret = av_channel_layout_copy(&ifilter->ch_layout, &par->ch_layout);
+    if (ret < 0)
+        return ret;
+
+    return 0;
+}
+
+static void flush_encoder(OutputStream *ost)
+{
+    AVCodecContext *enc = ost->enc_ctx;
+    OutputFile      *of = output_files[ost->file_index];
+    int ret;
+
+
+    // Try to enable encoding with no input frames.
+    // Maybe we should just let encoding fail instead.
+    if (!ost->initialized) {
+        FilterGraph *fg = ost->filter->graph;
+
+        av_log(NULL, AV_LOG_WARNING,
+               "Finishing stream %d:%d without any data written to it.\n",
+               ost->file_index, ost->st->index);
+
+        if (ost->filter && !fg->graph) {
+            int x;
+            for (x = 0; x < fg->nb_inputs; x++) {
+                InputFilter *ifilter = fg->inputs[x];
+                if (ifilter->format < 0 &&
+                    ifilter_parameters_from_codecpar(ifilter, ifilter->ist->par) < 0) {
+                    av_log(NULL, AV_LOG_ERROR, "Error copying paramerets from input stream\n");
+                    exit_program(1);
+                }
+            }
+
+            if (!ifilter_has_all_input_formats(fg))
+                return;
+
+            ret = configure_filtergraph(fg);
+            if (ret < 0) {
+                av_log(NULL, AV_LOG_ERROR, "Error configuring filter graph\n");
+                exit_program(1);
+            }
+
+            of_output_packet(of, ost->pkt, ost, 1);
+        }
+
+        init_output_stream_wrapper(ost, NULL, 1);
+    }
+
+    if (enc->codec_type != AVMEDIA_TYPE_VIDEO && enc->codec_type != AVMEDIA_TYPE_AUDIO)
+        return;
+
+    ret = submit_encode_frame(of, ost, NULL);
+    if (ret != AVERROR_EOF)
+        exit_program(1);
+}
+
 /**
  * Get and encode new output from any of the filtergraphs, without causing
  * activity.
@@ -1397,6 +1467,7 @@ static int reap_filters(int flush)
                 } else if (flush && ret == AVERROR_EOF) {
                     if (av_buffersink_get_type(filter) == AVMEDIA_TYPE_VIDEO)
                         do_video_out(of, ost, NULL);
+                    flush_encoder(ost);
                 }
                 break;
             }
@@ -1763,24 +1834,6 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
         print_final_stats(total_size);
 }
 
-static int ifilter_parameters_from_codecpar(InputFilter *ifilter, AVCodecParameters *par)
-{
-    int ret;
-
-    // We never got any input. Set a fake format, which will
-    // come from libavformat.
-    ifilter->format                 = par->format;
-    ifilter->sample_rate            = par->sample_rate;
-    ifilter->width                  = par->width;
-    ifilter->height                 = par->height;
-    ifilter->sample_aspect_ratio    = par->sample_aspect_ratio;
-    ret = av_channel_layout_copy(&ifilter->ch_layout, &par->ch_layout);
-    if (ret < 0)
-        return ret;
-
-    return 0;
-}
-
 static void flush_encoders(void)
 {
     int ret;
@@ -1792,52 +1845,8 @@ static void flush_encoders(void)
     }
 
     for (OutputStream *ost = ost_iter(NULL); ost; ost = ost_iter(ost)) {
-        AVCodecContext *enc = ost->enc_ctx;
-        OutputFile      *of = output_files[ost->file_index];
-
-        if (!enc)
-            continue;
-
-        // Try to enable encoding with no input frames.
-        // Maybe we should just let encoding fail instead.
-        if (!ost->initialized) {
-            FilterGraph *fg = ost->filter->graph;
-
-            av_log(ost, AV_LOG_WARNING,
-                   "Finishing stream without any data written to it.\n");
-
-            if (ost->filter && !fg->graph) {
-                int x;
-                for (x = 0; x < fg->nb_inputs; x++) {
-                    InputFilter *ifilter = fg->inputs[x];
-                    if (ifilter->format < 0 &&
-                        ifilter_parameters_from_codecpar(ifilter, ifilter->ist->par) < 0) {
-                        av_log(ost, AV_LOG_ERROR, "Error copying paramerets from input stream\n");
-                        exit_program(1);
-                    }
-                }
-
-                if (!ifilter_has_all_input_formats(fg))
-                    continue;
-
-                ret = configure_filtergraph(fg);
-                if (ret < 0) {
-                    av_log(ost, AV_LOG_ERROR, "Error configuring filter graph\n");
-                    exit_program(1);
-                }
-
-                of_output_packet(of, ost->pkt, ost, 1);
-            }
-
-            init_output_stream_wrapper(ost, NULL, 1);
-        }
-
-        if (enc->codec_type != AVMEDIA_TYPE_VIDEO && enc->codec_type != AVMEDIA_TYPE_AUDIO)
-            continue;
-
-        ret = submit_encode_frame(of, ost, NULL);
-        if (ret != AVERROR_EOF)
-            exit_program(1);
+        if (ost->enc_ctx)
+            flush_encoder(ost);
     }
 }
 
@@ -2130,6 +2139,8 @@ static int send_frame_to_filters(InputStream *ist, AVFrame *decoded_frame)
 
     av_assert1(ist->nb_filters > 0); /* ensure ret is initialized */
     for (i = 0; i < ist->nb_filters; i++) {
+        //fprintf(stderr, "send frame to filters %d:%d %g\n", ist->file_index, ist->st->index,
+        //        decoded_frame->pts * av_q2d(ist->st->time_base));
         ret = ifilter_send_frame(ist->filters[i], decoded_frame, i < ist->nb_filters - 1);
         if (ret == AVERROR_EOF)
             ret = 0; /* ignore */
@@ -2216,6 +2227,8 @@ static int decode_video(InputStream *ist, AVPacket *pkt, int *got_output, int64_
     if (ist->dts != AV_NOPTS_VALUE)
         dts = av_rescale_q(ist->dts, AV_TIME_BASE_Q, ist->st->time_base);
     if (pkt) {
+        //fprintf(stderr, "decode %d:%d %g\n", ist->file_index, ist->st->index,
+        //        pkt->pts * av_q2d(ist->st->time_base));
         pkt->dts = dts; // ffmpeg.c probably shouldn't do this
     }
 
@@ -3488,15 +3501,24 @@ static OutputStream *choose_output(void)
                     ost->initialized, ost->inputs_done, ost->finished);
         }
 
-        if (!ost->initialized && !ost->inputs_done)
-            return ost->unavailable ? NULL : ost;
+        if (!ost->initialized && !ost->inputs_done) {
+            if (ost->unavailable)
+                break;
+            return ost;
+        }
 
         if (!ost->finished && opts < opts_min) {
             opts_min = opts;
             ost_min  = ost->unavailable ? NULL : ost;
         }
     }
-    return ost_min;
+    if (ost_min)
+        return ost_min;
+    for (OutputStream *ost = ost_iter(NULL); ost; ost = ost_iter(ost)) {
+        if (!ost->finished)
+            return ost;
+    }
+    return NULL;
 }
 
 static void set_tty_echo(int on)
@@ -3769,8 +3791,10 @@ static int process_input(int file_index)
 
     is  = ifile->ctx;
     ret = ifile_get_packet(ifile, &pkt);
+    //fprintf(stderr, "get input packet %d: %d\n", file_index, ret);
 
     if (ret == AVERROR(EAGAIN)) {
+        //fprintf(stderr, "eagain\n");
         ifile->eagain = 1;
         return ret;
     }
@@ -3931,6 +3955,7 @@ static int transcode_step(void)
         av_log(NULL, AV_LOG_VERBOSE, "No more inputs to read from, finishing.\n");
         return AVERROR_EOF;
     }
+    //fprintf(stderr, "choose output %d:%d\n", ost->file_index, ost->index);
 
     if (ost->filter && !ost->filter->graph->graph) {
         if (ifilter_has_all_input_formats(ost->filter->graph)) {
@@ -3969,8 +3994,10 @@ static int transcode_step(void)
 
         if ((ret = transcode_from_filter(ost->filter->graph, &ist)) < 0)
             return ret;
-        if (!ist)
+        if (!ist) {
+            reset_eagain();
             return 0;
+        }
     } else if (ost->filter) {
         int i;
         for (i = 0; i < ost->filter->graph->nb_inputs; i++) {
@@ -3989,10 +4016,13 @@ static int transcode_step(void)
         av_assert0(ist);
     }
 
+    //fprintf(stderr, "process input %d\n", ist->file_index);
     ret = process_input(ist->file_index);
     if (ret == AVERROR(EAGAIN)) {
-        if (input_files[ist->file_index]->eagain)
+        if (input_files[ist->file_index]->eagain) {
+            //fprintf(stderr, "unavailable %d:%d->%d:%d", ist->file_index, ist->st->index, ost->file_index, ost->index);
             ost->unavailable = 1;
+        }
         return 0;
     }
 
@@ -4052,7 +4082,7 @@ static int transcode(void)
             process_input_packet(ist, NULL, 0);
         }
     }
-    flush_encoders();
+    //flush_encoders();
 
     term_exit();
 

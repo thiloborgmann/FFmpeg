@@ -228,19 +228,10 @@ static char *describe_filter_link(FilterGraph *fg, AVFilterInOut *inout, int in)
     return res;
 }
 
-static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
+static InputStream *ifilter_get_ist(FilterGraph *fg, AVFilterInOut *in)
 {
-    InputStream *ist = NULL;
     enum AVMediaType type = avfilter_pad_get_type(in->filter_ctx->input_pads, in->pad_idx);
-    InputFilter *ifilter;
-    int i;
-
-    // TODO: support other filter types
-    if (type != AVMEDIA_TYPE_VIDEO && type != AVMEDIA_TYPE_AUDIO) {
-        av_log(NULL, AV_LOG_FATAL, "Only video and audio filters supported "
-               "currently.\n");
-        exit_program(1);
-    }
+    InputStream *ist;
 
     if (in->name) {
         AVFormatContext *s;
@@ -251,11 +242,11 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
         if (file_idx < 0 || file_idx >= nb_input_files) {
             av_log(NULL, AV_LOG_FATAL, "Invalid file index %d in filtergraph description %s.\n",
                    file_idx, fg->graph_desc);
-            exit_program(1);
+            return NULL;
         }
         s = input_files[file_idx]->ctx;
 
-        for (i = 0; i < s->nb_streams; i++) {
+        for (int i = 0; i < s->nb_streams; i++) {
             enum AVMediaType stream_type = s->streams[i]->codecpar->codec_type;
             if (stream_type != type &&
                 !(stream_type == AVMEDIA_TYPE_SUBTITLE &&
@@ -278,6 +269,7 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
             exit_program(1);
         }
     } else {
+        int i;
         /* find the first unused stream of corresponding type */
         for (ist = ist_iter(NULL); ist; ist = ist_iter(ist)) {
             if (ist->user_set_discard == AVDISCARD_ALL)
@@ -292,6 +284,24 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
             exit_program(1);
         }
     }
+
+    return ist;
+}
+
+static int init_input_filter(FilterGraph *fg, AVFilterInOut *in)
+{
+    InputStream *ist = NULL;
+    enum AVMediaType type = avfilter_pad_get_type(in->filter_ctx->input_pads, in->pad_idx);
+    InputFilter *ifilter;
+
+    // TODO: support other filter types
+    if (type != AVMEDIA_TYPE_VIDEO && type != AVMEDIA_TYPE_AUDIO) {
+        av_log(NULL, AV_LOG_FATAL, "Only video and audio filters supported "
+               "currently.\n");
+        exit_program(1);
+    }
+
+    ist = ifilter_get_ist(fg, in);
     av_assert0(ist);
 
     ist->discard         = 0;
@@ -312,6 +322,8 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
 
     GROW_ARRAY(ist->filters, ist->nb_filters);
     ist->filters[ist->nb_filters - 1] = ifilter;
+
+    return 0;
 }
 
 static int read_binary(const char *path, uint8_t **data, int *len)
@@ -464,11 +476,14 @@ fail:
     return ret;
 }
 
-int init_complex_filtergraph(FilterGraph *fg)
+int init_complex_filtergraph(FilterGraph *fg, int pass)
 {
     AVFilterInOut *inputs, *outputs, *cur;
     AVFilterGraph *graph;
     int ret = 0;
+
+    if (fg->nb_inputs || fg->nb_outputs)
+        return 0;
 
     /* this graph is only used for determining the kinds of inputs
      * and outputs we have, and is discarded on exit from this function */
@@ -481,8 +496,19 @@ int init_complex_filtergraph(FilterGraph *fg)
     if (ret < 0)
         goto fail;
 
-    for (cur = inputs; cur; cur = cur->next)
-        init_input_filter(fg, cur);
+    for (cur = inputs; cur; cur = cur->next) {
+        if (!ifilter_get_ist(fg, cur)) {
+            if (pass == 0)
+                return 0;
+            exit_program(1);
+        }
+    }
+
+    for (cur = inputs; cur; cur = cur->next) {
+        ret = init_input_filter(fg, cur);
+        if (ret < 0)
+            return ret;
+    }
 
     for (cur = outputs; cur;) {
         OutputFilter *const ofilter = ALLOC_ARRAY_ELEM(fg->outputs, fg->nb_outputs);

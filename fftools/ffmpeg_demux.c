@@ -72,6 +72,8 @@ typedef struct Demuxer {
     int                   non_blocking;
 } Demuxer;
 
+//#include <sys/prctl.h>
+
 typedef struct DemuxMsg {
     AVPacket *pkt;
     int looping;
@@ -241,6 +243,10 @@ static void *input_thread(void *arg)
     AVPacket *pkt;
     unsigned flags = d->non_blocking ? AV_THREAD_MESSAGE_NONBLOCK : 0;
     int ret = 0;
+    char thread_name[16];
+
+    //snprintf(thread_name, sizeof(thread_name), "demux%d", f->index);
+    //prctl(PR_SET_NAME, (unsigned long)thread_name, 0, 0, 0);
 
     pkt = av_packet_alloc();
     if (!pkt) {
@@ -253,7 +259,19 @@ static void *input_thread(void *arg)
     while (1) {
         DemuxMsg msg = { NULL };
 
-        ret = av_read_frame(f->ctx, pkt);
+        if (f->dec) {
+            AVPacket *pkt1;
+            ret = av_thread_message_queue_recv(f->dec->fifo, &pkt1, 0);
+            if (ret >= 0) {
+                av_packet_move_ref(pkt, pkt1);
+                av_packet_free(&pkt1);
+                pkt->flags |= AV_PKT_FLAG_TRUSTED;
+                pkt->stream_index = 0;
+                //fprintf(stderr, "dec received %ld\n", pkt->pts);
+                f->streams[f->index]->st->time_base = f->dec->ost->mux_timebase;
+            }
+        } else
+            ret = av_read_frame(f->ctx, pkt);
 
         if (ret == AVERROR(EAGAIN)) {
             av_usleep(10000);
@@ -371,6 +389,9 @@ static int thread_start(Demuxer *d)
     if (nb_input_files > 1 &&
         (f->ctx->pb ? !f->ctx->pb->seekable :
          strcmp(f->ctx->iformat->name, "lavfi")))
+        d->non_blocking = 1;
+    if (nb_input_files > 1 &&
+        f->dec)
         d->non_blocking = 1;
     ret = av_thread_message_queue_alloc(&d->in_thread_queue,
                                         d->thread_queue_size, sizeof(DemuxMsg));

@@ -394,6 +394,12 @@ static int opt_map(void *optctx, const char *opt, const char *arg)
             av_log(NULL, AV_LOG_ERROR, "Invalid output link label: %s.\n", map);
             exit_program(1);
         }
+    } else if (map[0] == 'd' && map[1] == ':') {
+        GROW_ARRAY(o->stream_maps, o->nb_stream_maps);
+        m = &o->stream_maps[o->nb_stream_maps - 1];
+        m->decoder = 1;
+        m->file_index = strtol(map + 2, &p, 0);
+        m->stream_index = strtol(p + 1, &p, 0);
     } else {
         if (allow_unused = strchr(map, '?'))
             *allow_unused = 0;
@@ -745,12 +751,12 @@ static int opt_streamid(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-static int init_complex_filters(void)
+static int init_complex_filters(int pass)
 {
     int i, ret = 0;
 
     for (i = 0; i < nb_filtergraphs; i++) {
-        ret = init_complex_filtergraph(filtergraphs[i]);
+        ret = init_complex_filtergraph(filtergraphs[i], pass);
         if (ret < 0)
             return ret;
     }
@@ -1213,15 +1219,17 @@ void show_usage(void)
 enum OptGroup {
     GROUP_OUTFILE,
     GROUP_INFILE,
+    GROUP_DECODER,
 };
 
 static const OptionGroupDef groups[] = {
     [GROUP_OUTFILE] = { "output url",  NULL, OPT_OUTPUT },
     [GROUP_INFILE]  = { "input url",   "i",  OPT_INPUT },
+    [GROUP_DECODER] = { "decoding process", "dec", OPT_INPUT },
 };
 
-static int open_files(OptionGroupList *l, const char *inout,
-                      int (*open_file)(const OptionsContext*, const char*))
+static int open_files(OptionGroupList *l, const char *inout, int pass,
+                      int (*open_file)(OptionsContext*, const char*, int, int))
 {
     int i, ret;
 
@@ -1241,7 +1249,7 @@ static int open_files(OptionGroupList *l, const char *inout,
         }
 
         av_log(NULL, AV_LOG_DEBUG, "Opening an %s file: %s.\n", inout, g->arg);
-        ret = open_file(&o, g->arg);
+        ret = open_file(&o, g->arg, pass, i);
         uninit_options(&o);
         if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Error opening %s file %s.\n",
@@ -1280,24 +1288,34 @@ int ffmpeg_parse_options(int argc, char **argv)
     term_init();
 
     /* open input files */
-    ret = open_files(&octx.groups[GROUP_INFILE], "input", ifile_open);
+    ret = open_files(&octx.groups[GROUP_INFILE], "input", 0, ifile_open);
     if (ret < 0) {
         av_log(NULL, AV_LOG_FATAL, "Error opening input files: ");
         goto fail;
     }
 
-    /* create the complex filtergraphs */
-    ret = init_complex_filters();
-    if (ret < 0) {
-        av_log(NULL, AV_LOG_FATAL, "Error initializing complex filters.\n");
-        goto fail;
-    }
+    apply_sync_offsets();
 
-    /* open output files */
-    ret = open_files(&octx.groups[GROUP_OUTFILE], "output", of_open);
-    if (ret < 0) {
-        av_log(NULL, AV_LOG_FATAL, "Error opening output files: ");
-        goto fail;
+    for (int pass = 0; pass < 2; pass++) {
+        /* create the complex filtergraphs */
+        ret = init_complex_filters(pass);
+        if (ret < 0 && pass == 1) {
+            av_log(NULL, AV_LOG_FATAL, "Error initializing complex filters.\n");
+            goto fail;
+        }
+
+        /* open output files */
+        ret = open_files(&octx.groups[GROUP_OUTFILE], "output", pass, of_open);
+        if (ret < 0) {
+            av_log(NULL, AV_LOG_FATAL, "Error opening output files: ");
+            goto fail;
+        }
+
+        ret = open_files(&octx.groups[GROUP_DECODER], "decoder", pass, open_decoder);
+        if (ret < 0) {
+            av_log(NULL, AV_LOG_FATAL, "Error opening decoders: ");
+            goto fail;
+        }
     }
 
     correct_input_start_times();
@@ -1770,6 +1788,7 @@ const OptionDef options[] = {
         "initialise hardware device", "args" },
     { "filter_hw_device", HAS_ARG | OPT_EXPERT, { .func_arg = opt_filter_hw_device },
         "set hardware device used when filtering", "device" },
+    { "open_pass", HAS_ARG | OPT_EXPERT | OPT_OUTPUT | OPT_INT | OPT_OFFSET, { .off = OFFSET(open_pass) } },
 
     { NULL, },
 };

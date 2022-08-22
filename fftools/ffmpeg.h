@@ -81,6 +81,7 @@ typedef struct HWDevice {
 /* select an input stream for an output stream */
 typedef struct StreamMap {
     int disabled;           /* 1 is this mapping is disabled by a negative map */
+    int decoder;
     int file_index;
     int stream_index;
     char *linklabel;       /* name of an output link, for mapping lavfi outputs */
@@ -266,6 +267,8 @@ typedef struct OptionsContext {
     int        nb_enc_stats_post_fmt;
     SpecifierOpt *mux_stats_fmt;
     int        nb_mux_stats_fmt;
+
+    int open_pass;
 } OptionsContext;
 
 typedef struct InputFilter {
@@ -447,6 +450,12 @@ typedef struct LastFrameDuration {
     int64_t duration;
 } LastFrameDuration;
 
+typedef struct Decoder {
+    AVThreadMessageQueue *fifo;
+    struct OutputFile *of;
+    struct OutputStream *ost;
+} Decoder;
+
 typedef struct InputFile {
     int index;
 
@@ -482,6 +491,8 @@ typedef struct InputFile {
      * the last frame duration back to the demuxer thread */
     AVThreadMessageQueue *audio_duration_queue;
     int                   audio_duration_queue_size;
+
+    Decoder *dec;
 } InputFile;
 
 enum forced_keyframes_const {
@@ -687,6 +698,8 @@ typedef struct OutputStream {
      * subtitles utilizing fix_sub_duration at random access points.
      */
     unsigned int fix_sub_duration_heartbeat;
+
+    AVThreadMessageQueue *dec;
 } OutputStream;
 
 typedef struct OutputFile {
@@ -785,7 +798,7 @@ int configure_filtergraph(FilterGraph *fg);
 void check_filter_outputs(void);
 int filtergraph_is_simple(FilterGraph *fg);
 int init_simple_filtergraph(InputStream *ist, OutputStream *ost);
-int init_complex_filtergraph(FilterGraph *fg);
+int init_complex_filtergraph(FilterGraph *fg, int pass);
 
 void sub2video_update(InputStream *ist, int64_t heartbeat_pts, AVSubtitle *sub);
 

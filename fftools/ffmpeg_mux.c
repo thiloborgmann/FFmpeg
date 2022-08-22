@@ -26,6 +26,7 @@
 #include "sync_queue.h"
 #include "thread_queue.h"
 
+#include "libavutil/avassert.h"
 #include "libavutil/fifo.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/log.h"
@@ -37,6 +38,8 @@
 
 #include "libavformat/avformat.h"
 #include "libavformat/avio.h"
+
+//#include <sys/prctl.h>
 
 int want_sdp = 1;
 
@@ -201,6 +204,10 @@ static void *muxer_thread(void *arg)
     OutputFile *of = &mux->of;
     AVPacket  *pkt = NULL;
     int        ret = 0;
+    //char thread_name[16];
+
+    //snprintf(thread_name, sizeof(thread_name), "mux%d", of->index);
+    //prctl(PR_SET_NAME, (unsigned long)thread_name, 0, 0, 0);
 
     pkt = av_packet_alloc();
     if (!pkt) {
@@ -222,6 +229,17 @@ static void *muxer_thread(void *arg)
         }
 
         ost = of->streams[stream_idx];
+
+        if (ost->dec) {
+            if (ret < 0) {
+                av_thread_message_queue_set_err_recv(ost->dec, AVERROR_EOF);
+            } else {
+                AVPacket *pkt1 = av_packet_clone(pkt);
+                ret = av_thread_message_queue_send(ost->dec, &pkt1, 0);
+                av_assert0(ret >= 0);
+            }
+        }
+
         ret = sync_queue_process(mux, ost, ret < 0 ? NULL : pkt, &stream_eof);
         av_packet_unref(pkt);
         if (ret == AVERROR_EOF && stream_eof)
@@ -430,8 +448,8 @@ static int thread_start(Muxer *mux)
         AVPacket *pkt;
 
         /* try to improve muxing time_base (only possible if nothing has been written yet) */
-        if (!av_fifo_can_read(ms->muxing_queue))
-            ost->mux_timebase = ost->st->time_base;
+        //if (!av_fifo_can_read(ms->muxing_queue))
+        //    ost->mux_timebase = ost->st->time_base;
 
         while (av_fifo_read(ms->muxing_queue, &pkt, 1) >= 0) {
             ret = thread_submit_packet(mux, ost, pkt);
