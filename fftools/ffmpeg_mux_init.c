@@ -2398,3 +2398,251 @@ int of_open(const OptionsContext *o, const char *filename)
 
     return 0;
 }
+
+/*
+    for (int i = 0; i < of->nb_streams; i++) {
+        OutputStream *ost = of->streams[i];
+
+        if (ost->enc_ctx && ost->ist) {
+            InputStream *ist = ost->ist;
+            ist->decoding_needed |= DECODING_FOR_OST;
+            ist->processing_needed = 1;
+
+            if (ost->st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
+                ost->st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                err = init_simple_filtergraph(ist, ost);
+                if (err < 0) {
+                    av_log(ost, AV_LOG_ERROR,
+                           "Error initializing a simple filtergraph\n");
+                    exit_program(1);
+                }
+            }
+        } else if (ost->ist) {
+            ost->ist->processing_needed = 1;
+        }
+*/
+
+static void add_decoder_stream(OptionsContext *o, InputFile *f, int file_index,
+                               const char *output_stream)
+{
+    AVCodecParameters *par;
+    InputStream *ist;
+    char *next;
+
+    OutputFile *of;
+    OutputStream *ost;
+    int of_index, ost_index;
+    char *p;
+
+    int ret;
+
+    of_index = strtol(output_stream, &p, 0);
+    if (of_index < 0 || of_index >= nb_output_files) {
+        av_log(NULL, AV_LOG_FATAL, "Invalid output file index for decoder: %s\n", output_stream);
+        exit_program(1);
+    }
+    of = output_files[of_index];
+
+    ost_index = strtol(p + 1, NULL, 0);
+    if (ost_index < 0 || ost_index >= of->nb_streams) {
+        av_log(NULL, AV_LOG_FATAL, "Invalid output stream index for decoder: %s\n", output_stream);
+        exit_program(1);
+    }
+
+    //XXX ost = output_streams[of->ost_index + ost_index];
+    ost = of->streams[ost_index];
+
+    f->dec      = av_mallocz(sizeof(*f->dec));
+    f->dec->of  = of;
+    f->dec->ost = ost;
+
+    ret = av_thread_message_queue_alloc(&f->dec->fifo,
+                                        256, sizeof(AVPacket*));
+    if (ret < 0)
+        exit_program(1);
+
+    ost->dec = f->dec->fifo;
+
+    ist = ALLOC_ARRAY_ELEM(input_streams, nb_input_streams);
+    ist->st = avformat_new_stream(f->ctx, NULL);
+    ist->file_index = file_index;
+    ist->discard = 1;
+    ist->nb_samples = 0;
+    ist->first_dts = AV_NOPTS_VALUE;
+    ist->min_pts = INT64_MAX;
+    ist->max_pts = INT64_MIN;
+    ist->ts_scale = 1.0;
+
+    ist->st->time_base = ost->mux_timebase;
+    ist->framerate = ost->frame_rate;
+
+    par = ist->st->codecpar;
+    avcodec_parameters_copy(par, ost->st->codecpar);
+
+    if (o->nb_codec_tags) {
+        char *codec_tag = o->codec_tags[0].u.str;
+        uint32_t tag = strtol(codec_tag, &next, 0);
+        if (*next)
+            tag = AV_RL32(codec_tag);
+        par->codec_tag = tag;
+    }
+
+    ist->dec = avcodec_find_decoder(par->codec_id);
+    av_dict_copy(&ist->decoder_opts, o->g->codec_opts, 0);
+
+    ist->reinit_filters = -1;
+    ist->user_set_discard = AVDISCARD_NONE;
+
+    ist->filter_in_rescale_delta_last = AV_NOPTS_VALUE;
+    ist->prev_pkt_pts = AV_NOPTS_VALUE;
+
+    ist->dec_ctx = avcodec_alloc_context3(ist->dec);
+    if (!ist->dec_ctx) {
+        av_log(NULL, AV_LOG_ERROR, "Error allocating the decoder context.\n");
+        exit_program(1);
+    }
+
+    ret = avcodec_parameters_to_context(ist->dec_ctx, par);
+    if (ret < 0) {
+        av_log(NULL, AV_LOG_ERROR, "Error initializing the decoder context.\n");
+        exit_program(1);
+    }
+
+    ist->decoded_frame = av_frame_alloc();
+    if (!ist->decoded_frame)
+        exit_program(1);
+
+    ist->pkt = av_packet_alloc();
+    if (!ist->pkt)
+        exit_program(1);
+
+    if (o->bitexact)
+        ist->dec_ctx->flags |= AV_CODEC_FLAG_BITEXACT;
+
+    ist->par = avcodec_parameters_alloc();
+    if (!ist->par)
+        exit_program(1);
+    avcodec_parameters_from_context(ist->par, ist->dec_ctx);
+
+    switch (par->codec_type) {
+    case AVMEDIA_TYPE_VIDEO:
+        if(!ist->dec)
+            ist->dec = avcodec_find_decoder(par->codec_id);
+
+        // avformat_find_stream_info() doesn't set this for us anymore.
+        ist->dec_ctx->framerate = ost->frame_rate;
+
+        if (o->nb_frame_rates) {
+            const char *framerate = o->frame_rates[0].u.str;
+            if (framerate && av_parse_video_rate(&ist->framerate,
+                                                 framerate) < 0) {
+                av_log(NULL, AV_LOG_ERROR, "Error parsing framerate %s.\n",
+                       framerate);
+                exit_program(1);
+            }
+        }
+
+        ist->hwaccel_output_format = AV_PIX_FMT_NONE;
+
+        break;
+    case AVMEDIA_TYPE_AUDIO:
+        ist->guess_layout_max = INT_MAX;
+        break;
+    default:
+        abort();
+    }
+}
+
+static int open_decoder(OptionsContext *o, const char *filename, int pass, int idx)
+{
+    InputFile *f;
+    int i;
+    int64_t timestamp;
+    AVDictionary *unused_opts = NULL;
+    const AVDictionaryEntry *e = NULL;
+
+    if (pass > 0)
+        return 0;
+
+    if (o->start_time != AV_NOPTS_VALUE && o->start_time_eof != AV_NOPTS_VALUE) {
+        av_log(NULL, AV_LOG_WARNING, "Cannot use -ss and -sseof both, using -ss for %s\n", filename);
+        o->start_time_eof = AV_NOPTS_VALUE;
+    }
+
+    timestamp = (o->start_time == AV_NOPTS_VALUE) ? 0 : o->start_time;
+
+    idx = nb_input_files;
+    f = ALLOC_ARRAY_ELEM(input_files, nb_input_files);
+
+    f->ctx = avformat_alloc_context();
+    f->ctx->iformat = av_find_input_format("matroska");
+
+    f->ist_index  = nb_input_streams;
+    f->start_time = o->start_time;
+    f->recording_time = o->recording_time;
+    f->input_ts_offset = o->input_ts_offset;
+    f->ts_offset  = o->input_ts_offset - (copy_ts ? 0 : timestamp);
+    f->nb_streams = 1;
+    f->rate_emu   = o->rate_emu;
+    f->accurate_seek = o->accurate_seek;
+    f->loop = o->loop;
+    f->duration = 0;
+    f->time_base = (AVRational){ 1, 1 };
+
+    add_decoder_stream(o, f, idx, filename);
+
+    f->readrate = o->readrate ? o->readrate : 0.0;
+    if (f->readrate < 0.0f) {
+        av_log(NULL, AV_LOG_ERROR, "Option -readrate for Input #%d is %0.3f; it must be non-negative.\n", nb_input_files, f->readrate);
+        exit_program(1);
+    }
+    if (f->readrate && f->rate_emu) {
+        av_log(NULL, AV_LOG_WARNING, "Both -readrate and -re set for Input #%d. Using -readrate %0.3f.\n", nb_input_files, f->readrate);
+        f->rate_emu = 0;
+    }
+
+    f->thread_queue_size = o->thread_queue_size;
+
+    /* check if all codec options have been used */
+    unused_opts = strip_specifiers(o->g->codec_opts);
+    for (i = f->ist_index; i < nb_input_streams; i++) {
+        e = NULL;
+        while ((e = av_dict_get(input_streams[i]->decoder_opts, "", e,
+                                AV_DICT_IGNORE_SUFFIX)))
+            av_dict_set(&unused_opts, e->key, NULL, 0);
+    }
+
+    e = NULL;
+    while ((e = av_dict_get(unused_opts, "", e, AV_DICT_IGNORE_SUFFIX))) {
+        const AVClass *class = avcodec_get_class();
+        const AVOption *option = av_opt_find(&class, e->key, NULL, 0,
+                                             AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ);
+        const AVClass *fclass = avformat_get_class();
+        const AVOption *foption = av_opt_find(&fclass, e->key, NULL, 0,
+                                             AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ);
+        if (!option || foption)
+            continue;
+
+
+        if (!(option->flags & AV_OPT_FLAG_DECODING_PARAM)) {
+            av_log(NULL, AV_LOG_ERROR, "Codec AVOption %s (%s) specified for "
+                   "input file #%d (%s) is not a decoding option.\n", e->key,
+                   option->help ? option->help : "", nb_input_files - 1,
+                   filename);
+            exit_program(1);
+        }
+
+        av_log(NULL, AV_LOG_WARNING, "Codec AVOption %s (%s) specified for "
+               "input file #%d (%s) has not been used for any stream. The most "
+               "likely reason is either wrong type (e.g. a video option with "
+               "no video streams) or that it is a private option of some decoder "
+               "which was not actually used for any stream.\n", e->key,
+               option->help ? option->help : "", nb_input_files - 1, filename);
+    }
+    av_dict_free(&unused_opts);
+
+    input_stream_potentially_available = 1;
+
+    return 0;
+}
+
