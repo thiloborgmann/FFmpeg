@@ -2204,7 +2204,7 @@ static Muxer *mux_alloc(void)
     return mux;
 }
 
-int of_open(const OptionsContext *o, const char *filename)
+int of_open(const OptionsContext *o, const char *filename, int pass, int idx)
 {
     Muxer *mux;
     AVFormatContext *oc;
@@ -2420,9 +2420,30 @@ int of_open(const OptionsContext *o, const char *filename)
         } else if (ost->ist) {
             ost->ist->processing_needed = 1;
         }
+
+
+
+
+    if (stop_time != INT64_MAX && recording_time != INT64_MAX) {
+        stop_time = INT64_MAX;
+        av_log(mux, AV_LOG_WARNING, "-t and -to cannot be used together; using -t.\n");
+    }
+
+    if (stop_time != INT64_MAX && recording_time == INT64_MAX) {
+        int64_t start_time = o->start_time == AV_NOPTS_VALUE ? 0 : o->start_time;
+        if (stop_time <= start_time) {
+            av_log(mux, AV_LOG_ERROR, "-to value smaller than -ss; aborting.\n");
+            exit_program(1);
+        } else {
+            recording_time = stop_time - start_time;
+        }
+    }
+
+
+
 */
 
-static void add_decoder_stream(OptionsContext *o, InputFile *f, int file_index,
+static void add_decoder_stream(const OptionsContext *o, InputFile *f, int file_index,
                                const char *output_stream)
 {
     AVCodecParameters *par;
@@ -2463,7 +2484,8 @@ static void add_decoder_stream(OptionsContext *o, InputFile *f, int file_index,
 
     ost->dec = f->dec->fifo;
 
-    ist = ALLOC_ARRAY_ELEM(input_streams, nb_input_streams);
+    //ist = ALLOC_ARRAY_ELEM(input_streams, nb_input_streams);
+    ist = ALLOC_ARRAY_ELEM(f->streams, f->nb_streams);
     ist->st = avformat_new_stream(f->ctx, NULL);
     ist->file_index = file_index;
     ist->discard = 1;
@@ -2553,7 +2575,24 @@ static void add_decoder_stream(OptionsContext *o, InputFile *f, int file_index,
     }
 }
 
-static int open_decoder(OptionsContext *o, const char *filename, int pass, int idx)
+/*    if (stop_time != INT64_MAX && recording_time != INT64_MAX) {
+        stop_time = INT64_MAX;
+        av_log(mux, AV_LOG_WARNING, "-t and -to cannot be used together; using -t.\n");
+    }
+
+    if (stop_time != INT64_MAX && recording_time == INT64_MAX) {
+        int64_t start_time = o->start_time == AV_NOPTS_VALUE ? 0 : o->start_time;
+        if (stop_time <= start_time) {
+            av_log(mux, AV_LOG_ERROR, "-to value smaller than -ss; aborting.\n");
+            exit_program(1);
+        } else {
+            recording_time = stop_time - start_time;
+        }
+    }
+
+*/
+
+int open_decoder(const OptionsContext *o, const char *filename, int pass, int idx)
 {
     InputFile *f;
     int i;
@@ -2563,11 +2602,11 @@ static int open_decoder(OptionsContext *o, const char *filename, int pass, int i
 
     if (pass > 0)
         return 0;
-
-    if (o->start_time != AV_NOPTS_VALUE && o->start_time_eof != AV_NOPTS_VALUE) {
-        av_log(NULL, AV_LOG_WARNING, "Cannot use -ss and -sseof both, using -ss for %s\n", filename);
-        o->start_time_eof = AV_NOPTS_VALUE;
-    }
+// has to be checked elsewhere since OptionsContext became a const)
+    // if (o->start_time != AV_NOPTS_VALUE && o->start_time_eof != AV_NOPTS_VALUE) {
+    //     av_log(NULL, AV_LOG_WARNING, "Cannot use -ss and -sseof both, using -ss for %s\n", filename);
+    //     o->start_time_eof = AV_NOPTS_VALUE;
+    // }
 
     timestamp = (o->start_time == AV_NOPTS_VALUE) ? 0 : o->start_time;
 
@@ -2577,7 +2616,8 @@ static int open_decoder(OptionsContext *o, const char *filename, int pass, int i
     f->ctx = avformat_alloc_context();
     f->ctx->iformat = av_find_input_format("matroska");
 
-    f->ist_index  = nb_input_streams;
+    //f->ist_index  = nb_input_streams;
+    f->index = f->nb_streams;
     f->start_time = o->start_time;
     f->recording_time = o->recording_time;
     f->input_ts_offset = o->input_ts_offset;
@@ -2585,9 +2625,10 @@ static int open_decoder(OptionsContext *o, const char *filename, int pass, int i
     f->nb_streams = 1;
     f->rate_emu   = o->rate_emu;
     f->accurate_seek = o->accurate_seek;
-    f->loop = o->loop;
-    f->duration = 0;
-    f->time_base = (AVRational){ 1, 1 };
+// moved somewhere... DEMUXER ?
+    // f->loop = o->loop;
+    // f->duration = 0;
+    // f->time_base = (AVRational){ 1, 1 };
 
     add_decoder_stream(o, f, idx, filename);
 
@@ -2601,13 +2642,13 @@ static int open_decoder(OptionsContext *o, const char *filename, int pass, int i
         f->rate_emu = 0;
     }
 
-    f->thread_queue_size = o->thread_queue_size;
+ //   f->thread_queue_size = o->thread_queue_size;
 
     /* check if all codec options have been used */
     unused_opts = strip_specifiers(o->g->codec_opts);
-    for (i = f->ist_index; i < nb_input_streams; i++) {
+    for (i = f->index; i < f->nb_streams; i++) {
         e = NULL;
-        while ((e = av_dict_get(input_streams[i]->decoder_opts, "", e,
+        while ((e = av_dict_get(f->streams[i]->decoder_opts, "", e,
                                 AV_DICT_IGNORE_SUFFIX)))
             av_dict_set(&unused_opts, e->key, NULL, 0);
     }
@@ -2641,7 +2682,7 @@ static int open_decoder(OptionsContext *o, const char *filename, int pass, int i
     }
     av_dict_free(&unused_opts);
 
-    input_stream_potentially_available = 1;
+    //input_stream_potentially_available = 1;
 
     return 0;
 }

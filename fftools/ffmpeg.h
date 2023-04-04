@@ -828,7 +828,7 @@ int hwaccel_decode_init(AVCodecContext *avctx);
  */
 int of_stream_init(OutputFile *of, OutputStream *ost);
 int of_write_trailer(OutputFile *of);
-int of_open(const OptionsContext *o, const char *filename);
+int of_open(const OptionsContext *o, const char *filename, int pass, int idx);
 void of_close(OutputFile **pof);
 
 void of_enc_stats_close(void);
@@ -847,8 +847,13 @@ void of_enc_stats_close(void);
 void of_output_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int eof);
 int64_t of_filesize(OutputFile *of);
 
-int ifile_open(const OptionsContext *o, const char *filename);
+int ifile_open(const OptionsContext *o, const char *filename, int pass, int idx);
 void ifile_close(InputFile **f);
+
+// decoder funcs
+int open_decoder(const OptionsContext *o, const char *filename, int pass, int idx);
+
+
 
 /**
  * Get next input packet from the demuxer.

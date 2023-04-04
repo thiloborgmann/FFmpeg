@@ -860,7 +860,7 @@ static void dump_attachment(AVStream *st, const char *filename)
     avio_close(out);
 }
 
-int ifile_open(const OptionsContext *o, const char *filename)
+int ifile_open(const OptionsContext *o, const char *filename, int pass, int idx)
 {
     Demuxer   *d;
     InputFile *f;

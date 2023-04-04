@@ -1229,7 +1229,7 @@ static const OptionGroupDef groups[] = {
 };
 
 static int open_files(OptionGroupList *l, const char *inout, int pass,
-                      int (*open_file)(OptionsContext*, const char*, int, int))
+                      int (*open_file)(const OptionsContext*, const char*, int, int))
 {
     int i, ret;
 
@@ -1288,7 +1288,7 @@ int ffmpeg_parse_options(int argc, char **argv)
     term_init();
 
     /* open input files */
-    ret = open_files(&octx.groups[GROUP_INFILE], "input", 0, ifile_open);
+    ret = open_files(&octx.groups[GROUP_INFILE], "input", 0, &ifile_open);
     if (ret < 0) {
         av_log(NULL, AV_LOG_FATAL, "Error opening input files: ");
         goto fail;
@@ -1305,13 +1305,13 @@ int ffmpeg_parse_options(int argc, char **argv)
         }
 
         /* open output files */
-        ret = open_files(&octx.groups[GROUP_OUTFILE], "output", pass, of_open);
+        ret = open_files(&octx.groups[GROUP_OUTFILE], "output", pass, &of_open);
         if (ret < 0) {
             av_log(NULL, AV_LOG_FATAL, "Error opening output files: ");
             goto fail;
         }
 
-        ret = open_files(&octx.groups[GROUP_DECODER], "decoder", pass, open_decoder);
+        ret = open_files(&octx.groups[GROUP_DECODER], "decoder", pass, &open_decoder);
         if (ret < 0) {
             av_log(NULL, AV_LOG_FATAL, "Error opening decoders: ");
             goto fail;
