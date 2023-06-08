@@ -52,6 +52,7 @@
 #include "thread.h"
 #include "tiff_common.h"
 #include "vp8.h"
+#include "webp.h"
 
 #define VP8X_FLAG_ANIMATION             0x02
 #define VP8X_FLAG_XMP_METADATA          0x04
