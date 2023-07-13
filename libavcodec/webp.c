@@ -60,8 +60,6 @@
 #define VP8X_FLAG_ALPHA                 0x10
 #define VP8X_FLAG_ICC                   0x20
 
-#define MAX_PALETTE_SIZE                256
-#define MAX_CACHE_BITS                  11
 #define NUM_CODE_LENGTH_CODES           19
 #define HUFFMAN_CODES_PER_META_CODE     5
 #define NUM_LITERAL_CODES               256
