@@ -45,6 +45,7 @@
 #include "libavcodec/packet.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/colorspace.h"
+#include "libavutil/log.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
@@ -1491,6 +1492,8 @@ static int webp_decode_frame_common(AVCodecContext *avctx, uint8_t *data, int si
                 if (ret < 0)
                     return ret;
                 avctx->properties |= FF_CODEC_PROPERTY_LOSSLESS;
+
+                ff_thread_finish_setup(avctx);
             }
             bytestream2_skip(&gb, chunk_size);
             break;
@@ -2013,13 +2016,20 @@ static int webp_decode_frame(AVCodecContext *avctx, AVFrame *p,
     s->pos_x      = 0;
     s->pos_y      = 0;
     s->has_alpha  = 0;
+av_log(avctx, AV_LOG_WARNING, "from: %i x %i\n", s->frame->width, s->frame->height);
 
     ret = webp_decode_frame_common(avctx, avpkt->data, avpkt->size, got_frame, key_frame);
     if (ret < 0)
         goto end;
+av_log(avctx, AV_LOG_WARNING, "  to: %i x %i\n", s->frame->width, s->frame->height);
+av_log(avctx, AV_LOG_WARNING, " ctx: %i x %i\n", avctx->width, avctx->height);
+av_log(avctx, AV_LOG_WARNING, "cnvs: %i x %i\n", canvas->width, canvas->height);
 
+    // copy avctx? frame?, copy data pointers, decode, change in next update?
+    
+    /*
     if (s->vp8x_flags & VP8X_FLAG_ANIMATION) {
-            // no animation, output the decoded frame
+        // no animation, output the decoded frame
         // VP8 decoder might have changed the width and height of the frame
         AVFrame *frame  = s->frame;
         ret = av_frame_copy_props(canvas, frame);
@@ -2034,7 +2044,7 @@ static int webp_decode_frame(AVCodecContext *avctx, AVFrame *p,
     }
 
     ff_thread_finish_setup(s->avctx);
-
+*/
     if (*got_frame) {
         if (!(s->vp8x_flags & VP8X_FLAG_ANIMATION)) {
             // no animation, output the decoded frame
