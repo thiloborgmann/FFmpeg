@@ -80,7 +80,7 @@ static int fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *c
     pp->Reserved8Bits = 0;
 
     for (i = 0; i < 8; i++) {
-        if (h->refs[i].f->buf[0]) {
+        if (h->refs[i].f) {
             fill_picture_entry(&pp->ref_frame_map[i], ff_dxva2_get_surface_index(avctx, ctx, h->refs[i].f), 0);
             pp->ref_frame_coded_width[i]  = h->refs[i].f->width;
             pp->ref_frame_coded_height[i] = h->refs[i].f->height;
@@ -90,7 +90,7 @@ static int fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *c
 
     for (i = 0; i < 3; i++) {
         uint8_t refidx = h->h.refidx[i];
-        if (h->refs[refidx].f->buf[0])
+        if (h->refs[refidx].f)
             fill_picture_entry(&pp->frame_refs[i], ff_dxva2_get_surface_index(avctx, ctx, h->refs[refidx].f), 0);
         else
             pp->frame_refs[i].bPicEntry = 0xFF;
