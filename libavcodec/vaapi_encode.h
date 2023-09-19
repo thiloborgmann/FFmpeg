@@ -102,7 +102,8 @@ typedef struct VAAPIEncodePicture {
     int          nb_param_buffers;
     VABufferID     *param_buffers;
 
-    AVBufferRef    *output_buffer_ref;
+    /* Refcounted via the refstruct-API */
+    VABufferID     *output_buffer_ref;
     VABufferID      output_buffer;
 
     void           *priv_data;
@@ -262,7 +263,7 @@ typedef struct VAAPIEncodeContext {
     AVHWFramesContext *recon_frames;
 
     // Pool of (reusable) bitstream output buffers.
-    AVBufferPool   *output_buffer_pool;
+    struct FFRefStructPool *output_buffer_pool;
 
     // Global parameters which will be applied at the start of the
     // sequence (includes rate control parameters below).
