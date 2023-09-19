@@ -413,7 +413,6 @@ typedef struct HEVCFrame {
     RefPicListTab **rpl_tab;       ///< RefStruct reference
     int ctb_count;
     int poc;
-    struct HEVCFrame *collocated_ref;
 
     RefPicListTab *rpl;            ///< RefStruct reference
     int nb_rpl_elems;
@@ -527,6 +526,7 @@ typedef struct HEVCContext {
     enum HEVCNALUnitType nal_unit_type;
     int temporal_id;  ///< temporal_id_plus1 - 1
     HEVCFrame *ref;
+    HEVCFrame *collocated_ref;
     HEVCFrame DPB[32];
     int poc;
     int pocTid0;

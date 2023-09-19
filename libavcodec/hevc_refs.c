@@ -49,8 +49,6 @@ void ff_hevc_unref_frame(HEVCContext *s, HEVCFrame *frame, int flags)
         ff_refstruct_unref(&frame->rpl_tab);
         frame->refPicList = NULL;
 
-        frame->collocated_ref = NULL;
-
         ff_refstruct_unref(&frame->hwaccel_picture_private);
     }
 }
@@ -152,6 +150,7 @@ int ff_hevc_set_new_ref(HEVCContext *s, AVFrame **frame, int poc)
 
     *frame = ref->frame;
     s->ref = ref;
+    s->collocated_ref = NULL;
 
     if (s->sh.pic_output_flag)
         ref->flags = HEVC_FRAME_FLAG_OUTPUT | HEVC_FRAME_FLAG_SHORT_REF;
@@ -383,7 +382,7 @@ int ff_hevc_slice_rpl(HEVCContext *s)
 
         if (sh->collocated_list == list_idx &&
             sh->collocated_ref_idx < rpl->nb_refs)
-            s->ref->collocated_ref = rpl->ref[sh->collocated_ref_idx];
+            s->collocated_ref = rpl->ref[sh->collocated_ref_idx];
     }
 
     return 0;

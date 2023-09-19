@@ -2910,7 +2910,7 @@ static int hevc_frame_start(HEVCContext *s)
 fail:
     if (s->ref)
         ff_hevc_unref_frame(s, s->ref, ~0);
-    s->ref = NULL;
+    s->ref = s->collocated_ref = NULL;
     return ret;
 }
 
@@ -3131,7 +3131,7 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
     int i, ret = 0;
     int eos_at_start = 1;
 
-    s->ref = NULL;
+    s->ref = s->collocated_ref = NULL;
     s->last_eos = s->eos;
     s->eos = 0;
     s->overlap = 0;
@@ -3339,7 +3339,7 @@ static int hevc_decode_frame(AVCodecContext *avctx, AVFrame *rframe,
     if (sd && sd_size > 0)
         ff_dovi_update_cfg(&s->dovi_ctx, (AVDOVIDecoderConfigurationRecord *) sd);
 
-    s->ref = NULL;
+    s->ref = s->collocated_ref = NULL;
     ret    = decode_nal_units(s, avpkt->data, avpkt->size);
     if (ret < 0)
         return ret;
