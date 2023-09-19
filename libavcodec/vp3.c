@@ -46,8 +46,8 @@
 #include "hpeldsp.h"
 #include "jpegquanttables.h"
 #include "mathops.h"
+#include "progressframe.h"
 #include "thread.h"
-#include "threadframe.h"
 #include "videodsp.h"
 #include "vp3data.h"
 #include "vp4data.h"
@@ -180,9 +180,9 @@ typedef struct Vp3DecodeContext {
     int version;
     int width, height;
     int chroma_x_shift, chroma_y_shift;
-    ThreadFrame golden_frame;
-    ThreadFrame last_frame;
-    ThreadFrame current_frame;
+    ProgressFrame golden_frame;
+    ProgressFrame last_frame;
+    ProgressFrame current_frame;
     int keyframe;
     uint8_t idct_permutation[64];
     uint8_t idct_scantable[64];
@@ -336,12 +336,9 @@ static void vp3_decode_flush(AVCodecContext *avctx)
 {
     Vp3DecodeContext *s = avctx->priv_data;
 
-    if (s->golden_frame.f)
-        ff_thread_release_ext_buffer(avctx, &s->golden_frame);
-    if (s->last_frame.f)
-        ff_thread_release_ext_buffer(avctx, &s->last_frame);
-    if (s->current_frame.f)
-        ff_thread_release_ext_buffer(avctx, &s->current_frame);
+    ff_thread_progress_unref(avctx, &s->golden_frame);
+    ff_thread_progress_unref(avctx, &s->last_frame);
+    ff_thread_progress_unref(avctx, &s->current_frame);
 }
 
 static av_cold int vp3_decode_end(AVCodecContext *avctx)
@@ -355,9 +352,6 @@ static av_cold int vp3_decode_end(AVCodecContext *avctx)
 
     /* release all frames */
     vp3_decode_flush(avctx);
-    av_frame_free(&s->current_frame.f);
-    av_frame_free(&s->last_frame.f);
-    av_frame_free(&s->golden_frame.f);
 
     for (int i = 0; i < FF_ARRAY_ELEMS(s->coeff_vlc); i++)
         ff_vlc_free(&s->coeff_vlc[i]);
@@ -1899,10 +1893,9 @@ static void vp3_draw_horiz_band(Vp3DecodeContext *s, int y)
         /* At the end of the frame, report INT_MAX instead of the height of
          * the frame. This makes the other threads' ff_thread_await_progress()
          * calls cheaper, because they don't have to clip their values. */
-        ff_thread_report_progress(&s->current_frame,
+        ff_thread_progress_report(&s->current_frame,
                                   y_flipped == s->height ? INT_MAX
-                                                         : y_flipped - 1,
-                                  0);
+                                                         : y_flipped - 1);
     }
 
     if (!s->avctx->draw_horiz_band)
@@ -1933,7 +1926,7 @@ static void vp3_draw_horiz_band(Vp3DecodeContext *s, int y)
 static void await_reference_row(Vp3DecodeContext *s, const Vp3Fragment *fragment,
                                 int motion_y, int y)
 {
-    const ThreadFrame *ref_frame;
+    const ProgressFrame *ref_frame;
     int ref_row;
     int border = motion_y & 1;
 
@@ -1946,7 +1939,7 @@ static void await_reference_row(Vp3DecodeContext *s, const Vp3Fragment *fragment
     ref_row = y + (motion_y >> 1);
     ref_row = FFMAX(FFABS(ref_row), ref_row + 8 + border);
 
-    ff_thread_await_progress(ref_frame, ref_row, 0);
+    ff_thread_progress_await(ref_frame, ref_row);
 }
 
 #if CONFIG_VP4_DECODER
@@ -2057,12 +2050,12 @@ static void render_slice(Vp3DecodeContext *s, int slice)
     int16_t *block = s->block;
     int motion_x = 0xdeadbeef, motion_y = 0xdeadbeef;
     /* When decoding keyframes, the earlier frames may not be available,
-     * so to avoid using undefined pointer arithmetic on them we just
-     * use the current frame instead. Nothing is ever read from these
-     * frames in case of a keyframe. */
-    const AVFrame *last_frame   = s->last_frame.f->data[0]   ?
+     * so we just use the current frame in this case instead;
+     * it also avoid using undefined pointer arithmetic. Nothing is
+     * ever read from these frames in case of a keyframe. */
+    const AVFrame *last_frame   = s->last_frame.f   ?
                                       s->last_frame.f   : s->current_frame.f;
-    const AVFrame *golden_frame = s->golden_frame.f->data[0] ?
+    const AVFrame *golden_frame = s->golden_frame.f ?
                                       s->golden_frame.f : s->current_frame.f;
     int motion_halfpel_index;
     int first_pixel;
@@ -2302,18 +2295,6 @@ static av_cold int allocate_tables(AVCodecContext *avctx)
     return 0;
 }
 
-static av_cold int init_frames(Vp3DecodeContext *s)
-{
-    s->current_frame.f = av_frame_alloc();
-    s->last_frame.f    = av_frame_alloc();
-    s->golden_frame.f  = av_frame_alloc();
-
-    if (!s->current_frame.f || !s->last_frame.f || !s->golden_frame.f)
-        return AVERROR(ENOMEM);
-
-    return 0;
-}
-
 static av_cold int vp3_decode_init(AVCodecContext *avctx)
 {
     Vp3DecodeContext *s = avctx->priv_data;
@@ -2321,10 +2302,6 @@ static av_cold int vp3_decode_init(AVCodecContext *avctx)
     int c_width;
     int c_height;
     int y_fragment_count, c_fragment_count;
-
-    ret = init_frames(s);
-    if (ret < 0)
-        return ret;
 
     if (avctx->codec_tag == MKTAG('V', 'P', '4', '0')) {
         s->version = 3;
@@ -2493,59 +2470,43 @@ static av_cold int vp3_decode_init(AVCodecContext *avctx)
 }
 
 /// Release and shuffle frames after decode finishes
-static int update_frames(AVCodecContext *avctx)
+static void update_frames(AVCodecContext *avctx)
 {
     Vp3DecodeContext *s = avctx->priv_data;
-    int ret = 0;
 
-    if (s->keyframe) {
-        ff_thread_release_ext_buffer(avctx, &s->golden_frame);
-        ret = ff_thread_ref_frame(&s->golden_frame, &s->current_frame);
-    }
+    if (s->keyframe)
+        ff_thread_progress_replace(avctx, &s->golden_frame, &s->current_frame);
+
     /* shuffle frames */
-    ff_thread_release_ext_buffer(avctx, &s->last_frame);
-    FFSWAP(ThreadFrame, s->last_frame, s->current_frame);
-
-    return ret;
+    ff_thread_progress_unref(avctx, &s->last_frame);
+    FFSWAP(ProgressFrame, s->last_frame, s->current_frame);
 }
 
 #if HAVE_THREADS
-static int ref_frame(Vp3DecodeContext *s, ThreadFrame *dst, const ThreadFrame *src)
+static void ref_frames(AVCodecContext *avctx,
+                       Vp3DecodeContext *dst, const Vp3DecodeContext *src)
 {
-    ff_thread_release_ext_buffer(s->avctx, dst);
-    if (src->f->data[0])
-        return ff_thread_ref_frame(dst, src);
-    return 0;
-}
-
-static int ref_frames(Vp3DecodeContext *dst, const Vp3DecodeContext *src)
-{
-    int ret;
-    if ((ret = ref_frame(dst, &dst->current_frame, &src->current_frame)) < 0 ||
-        (ret = ref_frame(dst, &dst->golden_frame,  &src->golden_frame)) < 0  ||
-        (ret = ref_frame(dst, &dst->last_frame,    &src->last_frame)) < 0)
-        return ret;
-    return 0;
+    ff_thread_progress_replace(avctx, &dst->current_frame, &src->current_frame);
+    ff_thread_progress_replace(avctx, &dst->golden_frame,  &src->golden_frame);
+    ff_thread_progress_replace(avctx, &dst->last_frame,    &src->last_frame);
 }
 
 static int vp3_update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
 {
     Vp3DecodeContext *s = dst->priv_data;
     const Vp3DecodeContext *s1 = src->priv_data;
-    int qps_changed = 0, err;
+    int qps_changed = 0;
 
-    if (!s1->current_frame.f->data[0] ||
+    if (s != s1) {
+        // copy previous frame data
+        ref_frames(dst, s, s1);
+    }
+    if (!s1->current_frame.f ||
         s->width != s1->width || s->height != s1->height) {
-        if (s != s1)
-            ref_frames(s, s1);
         return -1;
     }
 
     if (s != s1) {
-        // copy previous frame data
-        if ((err = ref_frames(s, s1)) < 0)
-            return err;
-
         s->keyframe = s1->keyframe;
 
         // copy qscale data if necessary
@@ -2567,7 +2528,8 @@ static int vp3_update_thread_context(AVCodecContext *dst, const AVCodecContext *
         }
     }
 
-    return update_frames(dst);
+    update_frames(dst);
+    return 0;
 }
 #endif
 
@@ -2658,15 +2620,18 @@ static int vp3_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     if (avctx->skip_frame >= AVDISCARD_NONKEY && !s->keyframe)
         return buf_size;
 
+    if ((ret = ff_thread_progress_get_buffer(avctx, &s->current_frame,
+                                             AV_GET_BUFFER_FLAG_REF)) < 0) {
+        // Don't goto error here, as one can't report progress on or
+        // unref a non-existent frame.
+        return ret;
+    }
     s->current_frame.f->pict_type = s->keyframe ? AV_PICTURE_TYPE_I
                                                 : AV_PICTURE_TYPE_P;
     if (s->keyframe)
         s->current_frame.f->flags |= AV_FRAME_FLAG_KEY;
     else
         s->current_frame.f->flags &= ~AV_FRAME_FLAG_KEY;
-    if ((ret = ff_thread_get_ext_buffer(avctx, &s->current_frame,
-                                        AV_GET_BUFFER_FLAG_REF)) < 0)
-        goto error;
 
     if (!s->edge_emu_buffer) {
         s->edge_emu_buffer = av_malloc(9 * FFABS(s->current_frame.f->linesize[0]));
@@ -2724,19 +2689,16 @@ static int vp3_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 #endif
         }
     } else {
-        if (!s->golden_frame.f->data[0]) {
+        if (!s->golden_frame.f) {
             av_log(s->avctx, AV_LOG_WARNING,
                    "vp3: first frame not a keyframe\n");
 
+            if ((ret = ff_thread_progress_get_buffer(avctx, &s->golden_frame,
+                                                     AV_GET_BUFFER_FLAG_REF)) < 0)
+                goto error;
             s->golden_frame.f->pict_type = AV_PICTURE_TYPE_I;
-            if ((ret = ff_thread_get_ext_buffer(avctx, &s->golden_frame,
-                                                AV_GET_BUFFER_FLAG_REF)) < 0)
-                goto error;
-            ff_thread_release_ext_buffer(avctx, &s->last_frame);
-            if ((ret = ff_thread_ref_frame(&s->last_frame,
-                                           &s->golden_frame)) < 0)
-                goto error;
-            ff_thread_report_progress(&s->last_frame, INT_MAX, 0);
+            ff_thread_progress_replace(avctx, &s->last_frame, &s->golden_frame);
+            ff_thread_progress_report(&s->golden_frame, INT_MAX);
         }
     }
     ff_thread_finish_setup(avctx);
@@ -2814,16 +2776,13 @@ static int vp3_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 
     *got_frame = 1;
 
-    if (!HAVE_THREADS || !(s->avctx->active_thread_type & FF_THREAD_FRAME)) {
-        ret = update_frames(avctx);
-        if (ret < 0)
-            return ret;
-    }
+    if (!HAVE_THREADS || !(s->avctx->active_thread_type & FF_THREAD_FRAME))
+        update_frames(avctx);
 
     return buf_size;
 
 error:
-    ff_thread_report_progress(&s->current_frame, INT_MAX, 0);
+    ff_thread_progress_report(&s->current_frame, INT_MAX);
 
     if (!HAVE_THREADS || !(s->avctx->active_thread_type & FF_THREAD_FRAME))
         av_frame_unref(s->current_frame.f);
@@ -3173,7 +3132,8 @@ const FFCodec ff_theora_decoder = {
     .flush                 = vp3_decode_flush,
     UPDATE_THREAD_CONTEXT(vp3_update_thread_context),
     .caps_internal         = FF_CODEC_CAP_INIT_CLEANUP |
-                             FF_CODEC_CAP_EXPORTS_CROPPING | FF_CODEC_CAP_ALLOCATE_PROGRESS,
+                             FF_CODEC_CAP_EXPORTS_CROPPING |
+                             FF_CODEC_CAP_USES_PROGRESSFRAMES,
 };
 #endif
 
@@ -3191,7 +3151,7 @@ const FFCodec ff_vp3_decoder = {
     .flush                 = vp3_decode_flush,
     UPDATE_THREAD_CONTEXT(vp3_update_thread_context),
     .caps_internal         = FF_CODEC_CAP_INIT_CLEANUP |
-                             FF_CODEC_CAP_ALLOCATE_PROGRESS,
+                             FF_CODEC_CAP_USES_PROGRESSFRAMES,
 };
 
 #if CONFIG_VP4_DECODER
@@ -3209,6 +3169,6 @@ const FFCodec ff_vp4_decoder = {
     .flush                 = vp3_decode_flush,
     UPDATE_THREAD_CONTEXT(vp3_update_thread_context),
     .caps_internal         = FF_CODEC_CAP_INIT_CLEANUP |
-                             FF_CODEC_CAP_ALLOCATE_PROGRESS,
+                             FF_CODEC_CAP_USES_PROGRESSFRAMES,
 };
 #endif
