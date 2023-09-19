@@ -408,15 +408,13 @@ typedef struct HEVCFrame {
     AVFrame *frame_grain;
     ThreadFrame tf;
     int needs_fg; /* 1 if grain needs to be applied by the decoder */
-    MvField *tab_mvf;
+    MvField *tab_mvf;              ///< RefStruct reference
     RefPicList *refPicList;
-    RefPicListTab **rpl_tab;
+    RefPicListTab **rpl_tab;       ///< RefStruct reference
     int ctb_count;
     int poc;
     struct HEVCFrame *collocated_ref;
 
-    AVBufferRef *tab_mvf_buf;
-    AVBufferRef *rpl_tab_buf;
     RefPicListTab *rpl;            ///< RefStruct reference
     int nb_rpl_elems;
 
@@ -517,8 +515,8 @@ typedef struct HEVCContext {
     HEVCSEI sei;
     struct AVMD5 *md5_ctx;
 
-    AVBufferPool *tab_mvf_pool;
-    AVBufferPool *rpl_tab_pool;
+    struct FFRefStructPool *tab_mvf_pool;
+    struct FFRefStructPool *rpl_tab_pool;
 
     ///< candidate references for the current frame
     RefPicList rps[5];
