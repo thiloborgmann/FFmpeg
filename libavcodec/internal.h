@@ -64,6 +64,8 @@ typedef struct AVCodecInternal {
 
     struct FramePool *pool;
 
+    struct FFRefStructPool *progress_frame_pool;
+
     void *thread_ctx;
 
     /**

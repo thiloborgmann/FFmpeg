@@ -34,6 +34,8 @@
 #include "hwaccel_internal.h"
 #include "hwconfig.h"
 #include "internal.h"
+#include "progressframe.h"
+#include "progressframe_internal.h"
 #include "pthread_internal.h"
 #include "refstruct.h"
 #include "thread.h"
@@ -795,6 +797,7 @@ static av_cold int init_thread(PerThreadContext *p, int *threads_to_free,
     if (!copy->internal)
         return AVERROR(ENOMEM);
     copy->internal->thread_ctx = p;
+    copy->internal->progress_frame_pool = avctx->internal->progress_frame_pool;
 
     copy->delay = avctx->delay;
 
@@ -1025,4 +1028,44 @@ void ff_thread_release_ext_buffer(AVCodecContext *avctx, ThreadFrame *f)
     ff_refstruct_unref(&f->progress);
     f->owner[0] = f->owner[1] = NULL;
     ff_thread_release_buffer(avctx, f->f);
+}
+
+void ff_thread_progress_report(ProgressFrame *f, int n)
+{
+    ProgressInternal *pro = f->progress;
+    PerThreadContext *p = pro->owner;
+
+    if (!p ||
+        atomic_load_explicit(&pro->progress, memory_order_relaxed) >= n)
+        return;
+
+    if (atomic_load_explicit(&p->debug_threads, memory_order_relaxed))
+        av_log(p->avctx, AV_LOG_DEBUG,
+               "%p finished %d\n", (void*)pro, n);
+
+    pthread_mutex_lock(&p->progress_mutex);
+
+    atomic_store_explicit(&pro->progress, n, memory_order_release);
+
+    pthread_cond_broadcast(&p->progress_cond);
+    pthread_mutex_unlock(&p->progress_mutex);
+}
+
+void ff_thread_progress_await(const ProgressFrame *f, int n)
+{
+    ProgressInternal *pro = f->progress;
+    PerThreadContext *p = pro->owner;
+
+    if (!p ||
+        atomic_load_explicit(&pro->progress, memory_order_acquire) >= n)
+        return;
+
+    if (atomic_load_explicit(&p->debug_threads, memory_order_relaxed))
+        av_log(p->avctx, AV_LOG_DEBUG,
+               "thread awaiting %d from %p\n", n, (void*)pro);
+
+    pthread_mutex_lock(&p->progress_mutex);
+    while (atomic_load_explicit(&pro->progress, memory_order_relaxed) < n)
+        pthread_cond_wait(&p->progress_cond, &p->progress_mutex);
+    pthread_mutex_unlock(&p->progress_mutex);
 }

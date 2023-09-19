@@ -460,6 +460,7 @@ av_cold int avcodec_close(AVCodecContext *avctx)
         av_frame_free(&avci->recon_frame);
 
         ff_refstruct_unref(&avci->pool);
+        ff_refstruct_pool_uninit(&avci->progress_frame_pool);
 
         ff_hwaccel_uninit(avctx);
 

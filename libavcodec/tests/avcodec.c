@@ -145,7 +145,8 @@ int main(void){
                                         FF_CODEC_CAP_SETS_PKT_DTS |
                                         FF_CODEC_CAP_SKIP_FRAME_FILL_PARAM |
                                         FF_CODEC_CAP_EXPORTS_CROPPING |
-                                        FF_CODEC_CAP_SETS_FRAME_PROPS) ||
+                                        FF_CODEC_CAP_SETS_FRAME_PROPS |
+                                        FF_CODEC_CAP_USES_PROGRESSFRAMES) ||
                 codec->capabilities  & (AV_CODEC_CAP_AVOID_PROBING |
                                         AV_CODEC_CAP_CHANNEL_CONF  |
                                         AV_CODEC_CAP_DRAW_HORIZ_BAND))

@@ -46,6 +46,8 @@
 #include "hwconfig.h"
 #include "internal.h"
 #include "packet_internal.h"
+#include "progressframe.h"
+#include "progressframe_internal.h"
 #include "refstruct.h"
 #include "thread.h"
 
@@ -1694,6 +1696,111 @@ int ff_reget_buffer(AVCodecContext *avctx, AVFrame *frame, int flags)
     return ret;
 }
 
+static void check_progress_consistency(const ProgressFrame *f)
+{
+    av_assert1(!!f->f == !!f->progress);
+    av_assert1(!f->progress || f->progress->f == f->f);
+}
+
+static int thread_progress_get(AVCodecContext *avctx, ProgressFrame *f)
+{
+    FFRefStructPool *pool = avctx->internal->progress_frame_pool;
+
+    av_assert1(!f->f && !f->progress);
+
+    f->progress = ff_refstruct_pool_get(pool);
+    if (!f->progress)
+        return AVERROR(ENOMEM);
+
+    if (avctx->active_thread_type & FF_THREAD_FRAME) {
+        f->progress->owner = avctx->internal->thread_ctx;
+        atomic_init(&f->progress->progress, -1);
+    } else
+        f->progress->owner = NULL;
+    f->f = f->progress->f;
+    return 0;
+}
+
+int ff_thread_progress_get_buffer(AVCodecContext *avctx, ProgressFrame *f, int flags)
+{
+    int ret;
+
+    ret = thread_progress_get(avctx, f);
+    if (ret < 0)
+        return ret;
+
+    ret = ff_thread_get_buffer(avctx, f->progress->f, flags);
+    if (ret < 0) {
+        f->f = NULL;
+        ff_refstruct_unref_ext(avctx, &f->progress);
+        return ret;
+    }
+    return 0;
+}
+
+void ff_thread_progress_ref(ProgressFrame *dst, const ProgressFrame *src)
+{
+    av_assert1(src->progress && src->f && src->f == src->progress->f);
+    av_assert1(!dst->f && !dst->progress);
+    dst->f = src->f;
+    dst->progress = ff_refstruct_ref(src->progress);
+}
+
+void ff_thread_progress_unref(AVCodecContext *avctx, ProgressFrame *f)
+{
+    check_progress_consistency(f);
+    f->f = NULL;
+    ff_refstruct_unref_ext(avctx, &f->progress);
+}
+
+void ff_thread_progress_replace(AVCodecContext *avctx,
+                                ProgressFrame *dst, const ProgressFrame *src)
+{
+    if (dst == src)
+        return;
+    ff_thread_progress_unref(avctx, dst);
+    check_progress_consistency(src);
+    if (src->f)
+        ff_thread_progress_ref(dst, src);
+}
+
+#if !HAVE_THREADS
+void ff_thread_progress_report(ProgressFrame *f, int n)
+{
+}
+
+void ff_thread_progress_await(const ProgressFrame *f, int n)
+{
+}
+#endif /* !HAVE_THREADS */
+
+static int progress_frame_pool_init_cb(FFRefStructOpaque unused, void *obj)
+{
+    ProgressInternal *progress = obj;
+
+    progress->f = av_frame_alloc();
+    if (!progress->f)
+        return AVERROR(ENOMEM);
+    return 0;
+}
+
+static void progress_frame_pool_reset_cb(FFRefStructOpaque dynamic_opaque,
+                                         FFRefStructOpaque unused,
+                                         void *obj)
+{
+    AVCodecContext *avctx = dynamic_opaque.nc;
+    ProgressInternal *progress = obj;
+
+    ff_thread_release_buffer(avctx, progress->f);
+}
+
+static void progress_frame_pool_free_entry_cb(FFRefStructOpaque opaque, void *obj)
+{
+    ProgressInternal *progress = obj;
+
+    av_frame_free(&progress->f);
+}
+
 int ff_decode_preinit(AVCodecContext *avctx)
 {
     AVCodecInternal *avci = avctx->internal;
@@ -1762,6 +1869,17 @@ int ff_decode_preinit(AVCodecContext *avctx)
     if (!avci->in_pkt || !avci->last_pkt_props)
         return AVERROR(ENOMEM);
 
+    if (ffcodec(avctx->codec)->caps_internal & FF_CODEC_CAP_USES_PROGRESSFRAMES) {
+        avci->progress_frame_pool =
+            ff_refstruct_pool_alloc_ext_c(sizeof(ProgressInternal),
+                                          FF_REFSTRUCT_POOL_FLAG_DYNAMIC_OPAQUE,
+                                          (FFRefStructOpaque){ NULL },
+                                          progress_frame_pool_init_cb,
+                                          (FFRefStructUnrefCB){ .unref_ext = progress_frame_pool_reset_cb },
+                                          progress_frame_pool_free_entry_cb, NULL);
+        if (!avci->progress_frame_pool)
+            return AVERROR(ENOMEM);
+    }
     ret = decode_bsfs_init(avctx);
     if (ret < 0)
         return ret;
