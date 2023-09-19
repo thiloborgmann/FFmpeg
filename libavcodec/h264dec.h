@@ -117,7 +117,6 @@ typedef struct H264Picture {
     AVBufferRef *mb_type_buf;
     uint32_t *mb_type;
 
-    AVBufferRef *hwaccel_priv_buf;
     void *hwaccel_picture_private; ///< hardware accelerator private data
 
     AVBufferRef *ref_index_buf[2];
