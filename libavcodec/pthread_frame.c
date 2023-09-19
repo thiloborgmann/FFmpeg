@@ -40,6 +40,7 @@
 #include "refstruct.h"
 #include "thread.h"
 #include "threadframe.h"
+#include "threadprogress.h"
 #include "version_major.h"
 
 #include "libavutil/avassert.h"
@@ -1054,6 +1055,55 @@ void ff_thread_progress_report(ProgressFrame *f, int n)
 void ff_thread_progress_await(const ProgressFrame *f, int n)
 {
     ProgressInternal *pro = f->progress;
+    PerThreadContext *p = pro->owner;
+
+    if (!p ||
+        atomic_load_explicit(&pro->progress, memory_order_acquire) >= n)
+        return;
+
+    if (atomic_load_explicit(&p->debug_threads, memory_order_relaxed))
+        av_log(p->avctx, AV_LOG_DEBUG,
+               "thread awaiting %d from %p\n", n, (void*)pro);
+
+    pthread_mutex_lock(&p->progress_mutex);
+    while (atomic_load_explicit(&pro->progress, memory_order_relaxed) < n)
+        pthread_cond_wait(&p->progress_cond, &p->progress_mutex);
+    pthread_mutex_unlock(&p->progress_mutex);
+}
+
+void ff_thread_progress_init(ThreadProgress *pro, AVCodecContext *owner)
+{
+    PerThreadContext *p = pro->owner = owner->active_thread_type & FF_THREAD_FRAME ?
+                                           owner->internal->thread_ctx : NULL;
+    if (!p)
+        return;
+    atomic_init(&pro->progress, -1);
+    if (atomic_load_explicit(&p->debug_threads, memory_order_relaxed))
+        av_log(owner, AV_LOG_DEBUG, "Initializing ThreadProgress %p\n", (void*)pro);
+}
+
+void ff_thread_progress_report2(ThreadProgress *pro, int n)
+{
+    PerThreadContext *p = pro->owner;
+
+    if (!p ||
+        atomic_load_explicit(&pro->progress, memory_order_relaxed) >= n)
+        return;
+
+    if (atomic_load_explicit(&p->debug_threads, memory_order_relaxed))
+        av_log(p->avctx, AV_LOG_DEBUG,
+               "%p finished %d\n", (void*)pro, n);
+
+    pthread_mutex_lock(&p->progress_mutex);
+
+    atomic_store_explicit(&pro->progress, n, memory_order_release);
+
+    pthread_cond_broadcast(&p->progress_cond);
+    pthread_mutex_unlock(&p->progress_mutex);
+}
+
+void ff_thread_progress_await2(const ThreadProgress *pro, int n)
+{
     PerThreadContext *p = pro->owner;
 
     if (!p ||
