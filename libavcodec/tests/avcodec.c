@@ -141,8 +141,7 @@ int main(void){
                     ret = 1;
                 }
             }
-            if (codec2->caps_internal & (FF_CODEC_CAP_ALLOCATE_PROGRESS |
-                                        FF_CODEC_CAP_SETS_PKT_DTS |
+            if (codec2->caps_internal & (FF_CODEC_CAP_SETS_PKT_DTS |
                                         FF_CODEC_CAP_SKIP_FRAME_FILL_PARAM |
                                         FF_CODEC_CAP_EXPORTS_CROPPING |
                                         FF_CODEC_CAP_SETS_FRAME_PROPS |
@@ -172,10 +171,6 @@ int main(void){
                                        AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE |
                                        AV_CODEC_CAP_ENCODER_FLUSH))
                 ERR("Decoder %s has encoder-only capabilities\n");
-            if (codec2->caps_internal & FF_CODEC_CAP_ALLOCATE_PROGRESS &&
-                !(codec->capabilities & AV_CODEC_CAP_FRAME_THREADS))
-                ERR("Decoder %s wants allocated progress without supporting"
-                    "frame threads\n");
             if (codec2->cb_type != FF_CODEC_CB_TYPE_DECODE &&
                 codec2->caps_internal & FF_CODEC_CAP_SETS_PKT_DTS)
                 ERR("Decoder %s is marked as setting pkt_dts when it doesn't have"

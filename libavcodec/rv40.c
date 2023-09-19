@@ -591,5 +591,4 @@ const FFCodec ff_rv40_decoder = {
         AV_PIX_FMT_NONE
     },
     UPDATE_THREAD_CONTEXT(ff_rv34_decode_update_thread_context),
-    .caps_internal         = FF_CODEC_CAP_ALLOCATE_PROGRESS,
 };
