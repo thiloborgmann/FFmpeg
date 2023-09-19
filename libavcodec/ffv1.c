@@ -31,7 +31,6 @@
 #include "avcodec.h"
 #include "rangecoder.h"
 #include "ffv1.h"
-#include "threadframe.h"
 
 av_cold int ff_ffv1_common_init(AVCodecContext *avctx)
 {
