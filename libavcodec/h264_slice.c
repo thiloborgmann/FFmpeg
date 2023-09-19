@@ -44,6 +44,7 @@
 #include "mathops.h"
 #include "mpegutils.h"
 #include "rectangle.h"
+#include "refstruct.h"
 #include "thread.h"
 #include "threadframe.h"
 
@@ -254,10 +255,7 @@ static int alloc_picture(H264Context *h, H264Picture *pic)
         pic->ref_index[i]  = pic->ref_index_buf[i]->data;
     }
 
-    pic->pps_buf = av_buffer_ref(h->ps.pps_ref);
-    if (!pic->pps_buf)
-        goto fail;
-    pic->pps = (const PPS*)pic->pps_buf->data;
+    pic->pps = ff_refstruct_ref_c(h->ps.pps);
 
     pic->mb_width  = h->mb_width;
     pic->mb_height = h->mb_height;
@@ -363,25 +361,16 @@ int ff_h264_update_thread_context(AVCodecContext *dst,
 
     // SPS/PPS
     for (i = 0; i < FF_ARRAY_ELEMS(h->ps.sps_list); i++) {
-        ret = av_buffer_replace(&h->ps.sps_list[i], h1->ps.sps_list[i]);
-        if (ret < 0)
-            return ret;
+        ff_refstruct_replace(&h->ps.sps_list[i], h1->ps.sps_list[i]);
     }
     for (i = 0; i < FF_ARRAY_ELEMS(h->ps.pps_list); i++) {
-        ret = av_buffer_replace(&h->ps.pps_list[i], h1->ps.pps_list[i]);
-        if (ret < 0)
-            return ret;
+        ff_refstruct_replace(&h->ps.pps_list[i], h1->ps.pps_list[i]);
     }
 
-    ret = av_buffer_replace(&h->ps.pps_ref, h1->ps.pps_ref);
-    if (ret < 0)
-        return ret;
-    h->ps.pps = NULL;
+    ff_refstruct_replace(&h->ps.pps, h1->ps.pps);
     h->ps.sps = NULL;
-    if (h1->ps.pps_ref) {
-        h->ps.pps = (const PPS*)h->ps.pps_ref->data;
+    if (h1->ps.pps)
         h->ps.sps = h->ps.pps->sps;
-    }
 
     if (need_reinit || !inited) {
         h->width     = h1->width;
@@ -935,7 +924,7 @@ static enum AVPixelFormat get_pixel_format(H264Context *h, int force_callback)
 /* export coded and cropped frame dimensions to AVCodecContext */
 static void init_dimensions(H264Context *h)
 {
-    const SPS *sps = (const SPS*)h->ps.sps;
+    const SPS *sps = h->ps.sps;
     int cr = sps->crop_right;
     int cl = sps->crop_left;
     int ct = sps->crop_top;
@@ -1071,17 +1060,11 @@ static int h264_init_ps(H264Context *h, const H264SliceContext *sl, int first_sl
     const SPS *sps;
     int needs_reinit = 0, must_reinit, ret;
 
-    if (first_slice) {
-        av_buffer_unref(&h->ps.pps_ref);
-        h->ps.pps = NULL;
-        h->ps.pps_ref = av_buffer_ref(h->ps.pps_list[sl->pps_id]);
-        if (!h->ps.pps_ref)
-            return AVERROR(ENOMEM);
-        h->ps.pps = (const PPS*)h->ps.pps_ref->data;
-    }
+    if (first_slice)
+        ff_refstruct_replace(&h->ps.pps, h->ps.pps_list[sl->pps_id]);
 
     if (h->ps.sps != h->ps.pps->sps) {
-        h->ps.sps = (const SPS*)h->ps.pps->sps;
+        h->ps.sps = h->ps.pps->sps;
 
         if (h->mb_width  != h->ps.sps->mb_width ||
             h->mb_height != h->ps.sps->mb_height ||
@@ -1753,7 +1736,7 @@ static int h264_slice_header_parse(const H264Context *h, H264SliceContext *sl,
                sl->pps_id);
         return AVERROR_INVALIDDATA;
     }
-    pps = (const PPS*)h->ps.pps_list[sl->pps_id]->data;
+    pps = h->ps.pps_list[sl->pps_id];
     sps = pps->sps;
 
     sl->frame_num = get_bits(&sl->gb, sps->log2_max_frame_num);
@@ -2140,7 +2123,7 @@ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
     }
 
     if (!first_slice) {
-        const PPS *pps = (const PPS*)h->ps.pps_list[sl->pps_id]->data;
+        const PPS *pps = h->ps.pps_list[sl->pps_id];
 
         if (h->ps.pps->sps_id != pps->sps_id ||
             h->ps.pps->transform_8x8_mode != pps->transform_8x8_mode /*||
