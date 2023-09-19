@@ -53,18 +53,42 @@
  *
  * The functions provided by this API with an FFRefStructOpaque come in pairs
  * named foo_c and foo. The foo function accepts void* as opaque and is just
- * a wrapper around the foo_c function; "_c" means "(potentially) const".
+ * a wrapper around the foo_c function for the common case of a non-const
+ * opaque ("_c" means "(potentially) const"). For the allocation functions
+ * the wrappers also accept the ordinary "unref" form of FFRefStructUnrefCB;
+ * only the "_c" versions accept the full union to set the unref_ext variant.
  */
 typedef union {
     void *nc;
     const void *c;
 } FFRefStructOpaque;
 
+typedef union FFRefStructUnrefCB {
+    void (*unref)(FFRefStructOpaque opaque, void *obj);
+    void (*unref_ext)(FFRefStructOpaque dynamic_opaque,
+                      FFRefStructOpaque initial_opaque,
+                      void *obj);
+} FFRefStructUnrefCB;
+
 /**
  * If this flag is set in ff_refstruct_alloc_ext_c(), the object will not
  * be initially zeroed.
  */
 #define FF_REFSTRUCT_FLAG_NO_ZEROING (1 << 0)
+/**
+ * This flag being set indicates that the free_cb union is in
+ * the unref_ext-state.
+ * In this case unreferencing the object has to be done
+ * via ff_refstruct_unref_ext() instead of ff_refstruct_unref().
+ * Using the latter is forbidden and leads to undefined behaviour.
+ *
+ * The free_ext-callback will be called when the refcount reaches zero
+ * with the opaque given to ff_refstruct_unref_ext() passed along as
+ * the callback's dynamic_opaque parameter; the argument corresponding
+ * to the initial_opaque parameter will be the opaque provided to
+ * ff_refstruct_alloc_ext_c() and obj is the object to be unreferenced.
+ */
+#define FF_REFSTRUCT_FLAG_DYNAMIC_OPAQUE                              (1 << 1)
 
 /**
  * Allocate a refcounted object of usable size `size` managed via
@@ -76,17 +100,19 @@ typedef union {
  * @param size    Desired usable size of the returned object.
  * @param flags   A bitwise combination of FF_REFSTRUCT_FLAG_* flags.
  * @param opaque  A pointer that will be passed to the free_cb callback.
- * @param free_cb A callback for freeing this object's content
+ * @param free_cb Contains the callback for freeing this object's content
  *                when its reference count reaches zero;
  *                it must not free the object itself.
+ *                The state of free_cb is indicated by the
+ *                FF_REFSTRUCT_FLAG_DYNAMIC_OPAQUE flag.
  * @return A pointer to an object of the desired size or NULL on failure.
  */
 void *ff_refstruct_alloc_ext_c(size_t size, unsigned flags, FFRefStructOpaque opaque,
-                               void (*free_cb)(FFRefStructOpaque opaque, void *obj));
+                               FFRefStructUnrefCB free_cb);
 
 /**
  * A wrapper around ff_refstruct_alloc_ext_c() for the common case
- * of a non-const qualified opaque.
+ * of a non-const qualified and non-dynamic opaque.
  *
  * @see ff_refstruct_alloc_ext_c()
  */
@@ -95,7 +121,7 @@ void *ff_refstruct_alloc_ext(size_t size, unsigned flags, void *opaque,
                              void (*free_cb)(FFRefStructOpaque opaque, void *obj))
 {
     return ff_refstruct_alloc_ext_c(size, flags, (FFRefStructOpaque){.nc = opaque},
-                                    free_cb);
+                                    (FFRefStructUnrefCB){ .unref = free_cb });
 }
 
 /**
@@ -107,12 +133,42 @@ void *ff_refstruct_allocz(size_t size);
  * Decrement the reference count of the underlying object and automatically
  * free the object if there are no more references to it.
  *
+ * This function must not be used if the object has been created
+ * with the dynamic opaque flags (FF_REFSTRUCT_FLAG_DYNAMIC_OPAQUE
+ * or FF_REFSTRUCT_POOL_FLAG_DYNAMIC_OPAQUE for objects from pools).
+ *
  * `*objp == NULL` is legal and a no-op.
  *
  * @param objp Pointer to a pointer that is either NULL or points to an object
  *             managed via this API. `*objp` is set to NULL on return.
  */
 void ff_refstruct_unref(void *objp);
+
+/**
+ * Decrement the reference count of the underlying object and automatically
+ * free the object if there are no more references to it.
+ *
+ * This function may only be used of the object has been created
+ * with the dynamic opaque flags (FF_REFSTRUCT_FLAG_DYNAMIC_OPAQUE
+ * or FF_REFSTRUCT_POOL_FLAG_DYNAMIC_OPAQUE for objects from pools).
+ *
+ * `*objp == NULL` is legal and a no-op.
+ *
+ * @param objp Pointer to a pointer that is either NULL or points to an object
+ *             managed via this API. `*objp` is set to NULL on return.
+ */
+void ff_refstruct_unref_ext_c(FFRefStructOpaque opaque, void *objp);
+/**
+ * A wrapper around ff_refstruct_unref_ext_c() for the common case
+ * of a non-const qualified dynamic opaque.
+ *
+ * @see ff_refstruct_alloc_ext_c()
+ */
+static inline
+void ff_refstruct_unref_ext(void *opaque, void *objp)
+{
+    ff_refstruct_unref_ext_c((FFRefStructOpaque){ .nc = opaque }, objp);
+}
 
 /**
  * Create a new reference to an object managed via this API,
@@ -215,6 +271,16 @@ typedef struct FFRefStructPool FFRefStructPool;
  * flag had been provided.
  */
 #define FF_REFSTRUCT_POOL_FLAG_ZERO_EVERY_TIME                       (1 << 18)
+/**
+ * This flag being set indicates that the reset_cb union is in
+ * the unref_ext-state. The semantics of FF_REFSTRUCT_FLAG_DYNAMIC_OPAQUE
+ * apply with the opaque given to ff_refstruct_alloc_ext_c()
+ * corresponding to the opaque given to ff_refstruct_pool_alloc_ext_c().
+ *
+ * This flag is incompatible with FF_REFSTRUCT_POOL_FLAG_RESET_ON_INIT_ERROR.
+ * Giving both to a pool allocation function leads to undefined behaviour.
+ */
+#define FF_REFSTRUCT_POOL_FLAG_DYNAMIC_OPAQUE FF_REFSTRUCT_FLAG_DYNAMIC_OPAQUE
 
 /**
  * Equivalent to ff_refstruct_pool_alloc(size, flags, NULL, NULL, NULL, NULL, NULL)
@@ -240,13 +306,13 @@ FFRefStructPool *ff_refstruct_pool_alloc(size_t size, unsigned flags);
 FFRefStructPool *ff_refstruct_pool_alloc_ext_c(size_t size, unsigned flags,
                                                FFRefStructOpaque opaque,
                                                int  (*init_cb)(FFRefStructOpaque opaque, void *obj),
-                                               void (*reset_cb)(FFRefStructOpaque opaque, void *obj),
+                                               FFRefStructUnrefCB reset_cb,
                                                void (*free_entry_cb)(FFRefStructOpaque opaque, void *obj),
                                                void (*free_cb)(FFRefStructOpaque opaque));
 
 /**
  * A wrapper around ff_refstruct_pool_alloc_ext_c() for the common case
- * of a non-const qualified opaque.
+ * of a non-const qualified and non-dynamic opaque.
  *
  * @see ff_refstruct_pool_alloc_ext_c()
  */
@@ -259,7 +325,8 @@ FFRefStructPool *ff_refstruct_pool_alloc_ext(size_t size, unsigned flags,
                                              void (*free_cb)(FFRefStructOpaque opaque))
 {
     return ff_refstruct_pool_alloc_ext_c(size, flags, (FFRefStructOpaque){.nc = opaque},
-                                         init_cb, reset_cb, free_entry_cb, free_cb);
+                                         init_cb, (FFRefStructUnrefCB){ .unref = reset_cb },
+                                         free_entry_cb, free_cb);
 }
 
 /**

@@ -903,11 +903,13 @@ static const CodedBitstreamUnitTypeDescriptor
 
 static void *cbs_alloc_content(const CodedBitstreamUnitTypeDescriptor *desc)
 {
+    FFRefStructUnrefCB unref_cb;
+    unref_cb.unref = desc->content_type == CBS_CONTENT_TYPE_COMPLEX
+                                            ? desc->type.complex.content_free
+                                            : cbs_default_free_unit_content;
     return ff_refstruct_alloc_ext_c(desc->content_size, 0,
                                     (FFRefStructOpaque){ .c = desc },
-                                    desc->content_type == CBS_CONTENT_TYPE_COMPLEX
-                                            ? desc->type.complex.content_free
-                                            : cbs_default_free_unit_content);
+                                    unref_cb);
 }
 
 int ff_cbs_alloc_unit_content(CodedBitstreamContext *ctx,
