@@ -43,6 +43,7 @@
  */
 
 #include "libavcodec/packet.h"
+#include "libavcodec/progressframe.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/colorspace.h"
 #include "libavutil/log.h"
@@ -197,7 +198,7 @@ typedef struct ImageContext {
 typedef struct WebPContext {
     VP8Context v;                       /* VP8 Context used for lossy decoding */
     GetBitContext gb;                   /* bitstream reader for main image chunk */
-    ThreadFrame canvas_frame;           /* ThreadFrame for canvas */
+    ProgressFrame canvas_frame;         /* ThreadFrame for canvas */
     AVFrame *frame;                     /* AVFrame for decoded frame */
     AVFrame *alpha_frame;               /* AVFrame for alpha data decompressed from VP8L */
     AVPacket *pkt;                      /* AVPacket to be passed to the underlying VP8 decoder */
@@ -228,6 +229,10 @@ typedef struct WebPContext {
     uint8_t background_yuva[4];         /* background color in YUVA format */
     const uint8_t *background_data[4];  /* "planes" for background color in YUVA format */
     uint8_t transparent_yuva[4];        /* transparent black in YUVA format */
+
+    int carry_format;
+    int carry_width;
+    int carry_height;
 
     int nb_transforms;                  /* number of transforms */
     enum TransformType transforms[4];   /* transformations used in the image, in order */
@@ -1379,7 +1384,8 @@ static int init_canvas_frame(WebPContext *s, int format, int key_frame)
         if (s->avctx->thread_count > 1) {
             av_log(s->avctx, AV_LOG_WARNING, "Canvas change detected. The output will be damaged. Use -threads 1 to try decoding with best effort.\n");
             // unlock previous frames that have sent an _await() call
-            ff_thread_report_progress(&s->canvas_frame, INT_MAX, 0);
+//            ff_thread_report_progress(&s->canvas_frame, INT_MAX, 0);
+            ff_thread_progress_report(&s->canvas_frame, INT_MAX);
             return AVERROR_PATCHWELCOME;
         } else {
             // warn for damaged frames
@@ -1388,9 +1394,15 @@ static int init_canvas_frame(WebPContext *s, int format, int key_frame)
     }
 
     s->avctx->pix_fmt = format;
+    // XXX carry
+    /*
     canvas->format    = format;
     canvas->width     = s->canvas_width;
     canvas->height    = s->canvas_height;
+    */
+    s->carry_format = format;
+    s->carry_width  = s->canvas_width;
+    s->carry_height = s->canvas_height;
 
     // VP8 decoder changed the width and height in AVCodecContext.
     // Change it back to the canvas size.
@@ -1398,8 +1410,10 @@ static int init_canvas_frame(WebPContext *s, int format, int key_frame)
     if (ret < 0)
         return ret;
 
-    ff_thread_release_ext_buffer(s->avctx, &s->canvas_frame);
-    ret = ff_thread_get_ext_buffer(s->avctx, &s->canvas_frame, AV_GET_BUFFER_FLAG_REF);
+//    ff_thread_release_ext_buffer(s->avctx, &s->canvas_frame);
+    ff_thread_progress_unref(s->avctx, &s->canvas_frame);
+//    ret = ff_thread_get_ext_buffer(s->avctx, &s->canvas_frame, AV_GET_BUFFER_FLAG_REF);
+    ret = ff_thread_progress_get_buffer(s->avctx, &s->canvas_frame, AV_GET_BUFFER_FLAG_REF);
     if (ret < 0)
         return ret;
 
@@ -1464,7 +1478,9 @@ static int webp_decode_frame_common(AVCodecContext *avctx, uint8_t *data, int si
             s->canvas_height = 0;
             s->has_exif      = 0;
             s->has_iccp      = 0;
-            ff_thread_release_ext_buffer(avctx, &s->canvas_frame);
+//            ff_thread_release_ext_buffer(avctx, &s->canvas_frame);
+            // XXX should be active:
+            //ff_thread_progress_unref(avctx, &s->canvas_frame);
             break;
         case MKTAG('V', 'P', '8', ' '):
             if (!*got_frame) {
@@ -1566,7 +1582,7 @@ static int webp_decode_frame_common(AVCodecContext *avctx, uint8_t *data, int si
                 goto exif_end;
             }
 
-            bytestream2_seek(&exif_gb, ifd_of   fset, SEEK_SET);
+            bytestream2_seek(&exif_gb, ifd_offset, SEEK_SET);
             if (ff_exif_decode_ifd(avctx, &exif_gb, le, 0, &exif_metadata) < 0) {
                 av_log(avctx, AV_LOG_ERROR, "error decoding Exif data\n");
                 goto exif_end;
@@ -2051,7 +2067,8 @@ av_log(avctx, AV_LOG_WARNING, "cnvs: %i x %i\n", canvas->width, canvas->height);
             av_frame_move_ref(p, s->frame);
         } else {
             if (!key_frame) {
-                ff_thread_await_progress(&s->canvas_frame, s->await_progress, 0);
+//                ff_thread_await_progress(&s->canvas_frame, s->await_progress, 0);
+                ff_thread_progress_await(&s->canvas_frame, s->await_progress);
 
                 ret = dispose_prev_frame_in_canvas(s);
                 if (ret < 0)
@@ -2066,7 +2083,8 @@ av_log(avctx, AV_LOG_WARNING, "cnvs: %i x %i\n", canvas->width, canvas->height);
             if (ret < 0)
                 goto end;
 
-            ff_thread_report_progress(&s->canvas_frame, s->await_progress + 1, 0);
+//            ff_thread_report_progress(&s->canvas_frame, s->await_progress + 1, 0);
+            ff_thread_progress_report(&s->canvas_frame, s->await_progress + 1);
         }
 
         p->pts = avpkt->pts;
@@ -2113,7 +2131,8 @@ static av_cold int webp_decode_close(AVCodecContext *avctx)
     WebPContext *s = avctx->priv_data;
 
     av_packet_free(&s->pkt);
-    ff_thread_release_ext_buffer(avctx, &s->canvas_frame);
+//    ff_thread_release_ext_buffer(avctx, &s->canvas_frame);
+    ff_thread_progress_unref(avctx, &s->canvas_frame);
     av_frame_free(&s->canvas_frame.f);
     av_frame_free(&s->frame);
 
@@ -2127,7 +2146,8 @@ static void webp_decode_flush(AVCodecContext *avctx)
 {
     WebPContext *s = avctx->priv_data;
 
-    ff_thread_release_ext_buffer(avctx, &s->canvas_frame);
+//    ff_thread_release_ext_buffer(avctx, &s->canvas_frame);
+    ff_thread_progress_unref(avctx, &s->canvas_frame);
 }
 
 #if HAVE_THREADS
@@ -2135,15 +2155,16 @@ static int webp_update_thread_context(AVCodecContext *dst, const AVCodecContext 
 {
     WebPContext *wsrc = src->priv_data;
     WebPContext *wdst = dst->priv_data;
-    int ret;
+//    int ret;
 
     if (dst == src)
         return 0;
 
-    ff_thread_release_ext_buffer(dst, &wdst->canvas_frame);
-    if (wsrc->canvas_frame.f->data[0] &&
-        (ret = ff_thread_ref_frame(&wdst->canvas_frame, &wsrc->canvas_frame)) < 0)
-        return ret;
+//    ff_thread_release_ext_buffer(dst, &wdst->canvas_frame);
+//    if (wsrc->canvas_frame.f->data[0] &&
+//        (ret = ff_thread_ref_frame(&wdst->canvas_frame, &wsrc->canvas_frame)) < 0)
+//        return ret;
+    ff_thread_progress_replace(dst, &wdst->canvas_frame, &wsrc->canvas_frame);
 
     wdst->vp8x_flags      = wsrc->vp8x_flags;
     wdst->canvas_width    = wsrc->canvas_width;
@@ -2175,6 +2196,6 @@ const FFCodec ff_webp_decoder = {
     .flush          = webp_decode_flush,
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal  = FF_CODEC_CAP_ICC_PROFILES |
-                      FF_CODEC_CAP_ALLOCATE_PROGRESS |
                       FF_CODEC_CAP_USES_PROGRESSFRAMES,
 };
+                      // FF_CODEC_CAP_ALLOCATE_PROGRESS |
