@@ -943,4 +943,32 @@ which in turn, acts as a ceiling for the size of scripts that can be read.
 Default is 1 MiB.
 @end table
 
+@section webp
+
+Animated WebP demuxer.
+
+It accepts the following options:
+
+@table @option
+@item -min_delay @var{int}
+Set the minimum valid delay between frames in milliseconds.
+Range is 0 to 60000. Default value is 10.
+
+@item -max_webp_delay @var{int}
+Set the maximum valid delay between frames in milliseconds.
+Range is 0 to 16777215. Default value is 16777215 (over four hours),
+the maximum value allowed by the specification.
+
+@item -default_delay @var{int}
+Set the default delay between frames in milliseconds.
+Range is 0 to 60000. Default value is 100.
+
+@item -ignore_loop @var{bool}
+WebP files can contain information to loop a certain number of times
+(or infinitely). If @option{ignore_loop} is set to true, then the loop
+setting from the input will be ignored and looping will not occur.
+If set to false, then looping will occur and will cycle the number
+of times according to the WebP. Default value is true.
+@end table
+
 @c man end DEMUXERS
