@@ -62,6 +62,7 @@ version 6.1:
   variable-fields elements within the same parent element
 - ffprobe -output_format option added as an alias of -of
 - animated WebP decoder
+- animated WebP demuxer
 
 
 version 6.0:
