@@ -1378,7 +1378,76 @@ static int vp8_lossy_decode_frame(AVCodecContext *avctx, AVFrame *p,
     return ret;
 }
 
-int init_canvas_frame(WebPContext *s, int format, int key_frame);
+static int init_canvas_frame(WebPContext *s, int format, int key_frame)
+{
+    AVFrame *canvas = s->canvas_frame.f;
+    int height;
+    int ret;
+
+    // canvas is needed only for animation
+    if (!(s->vp8x_flags & VP8X_FLAG_ANIMATION))
+        return 0;
+
+    // avoid init for non-key frames whose format and size did not change
+    if (!key_frame &&
+        canvas->data[0] &&
+        canvas->format == format &&
+        canvas->width  == s->canvas_width &&
+        canvas->height == s->canvas_height)
+        return 0;
+
+    // canvas changes within IPPP sequences will lose thread sync
+    // because of the ThreadFrame reallocation and will wait forever
+    // so if frame-threading is used, forbid canvas changes and unlock
+    // previous frames
+    if (!key_frame && canvas->data[0]) {
+        if (s->avctx->thread_count > 1) {
+            av_log(s->avctx, AV_LOG_WARNING, "Canvas change detected. The output will be damaged. Use -threads 1 to try decoding with best effort.\n");
+            // unlock previous frames that have sent an _await() call
+            ff_thread_report_progress(&s->canvas_frame, INT_MAX, 0);
+            return AVERROR_PATCHWELCOME;
+        } else {
+            // warn for damaged frames
+            av_log(s->avctx, AV_LOG_WARNING, "Canvas change detected. The output will be damaged.\n");
+        }
+    }
+
+    s->avctx->pix_fmt = format;
+    canvas->format    = format;
+    canvas->width     = s->canvas_width;
+    canvas->height    = s->canvas_height;
+
+    // VP8 decoder changed the width and height in AVCodecContext.
+    // Change it back to the canvas size.
+    ret = ff_set_dimensions(s->avctx, s->canvas_width, s->canvas_height);
+    if (ret < 0)
+        return ret;
+
+    ff_thread_release_ext_buffer(&s->canvas_frame);
+    ret = ff_thread_get_ext_buffer(s->avctx, &s->canvas_frame, AV_GET_BUFFER_FLAG_REF);
+    if (ret < 0)
+        return ret;
+
+    if (canvas->format == AV_PIX_FMT_ARGB) {
+        height = canvas->height;
+        memset(canvas->data[0], 0, height * canvas->linesize[0]);
+    } else /* if (canvas->format == AV_PIX_FMT_YUVA420P) */ {
+        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(canvas->format);
+        for (int comp = 0; comp < desc->nb_components; comp++) {
+            int plane = desc->comp[comp].plane;
+
+            if (comp == 1 || comp == 2)
+                height = AV_CEIL_RSHIFT(canvas->height, desc->log2_chroma_h);
+            else
+                height = FFALIGN(canvas->height, 1 << desc->log2_chroma_h);
+
+            memset(canvas->data[plane], s->transparent_yuva[plane],
+                   height * canvas->linesize[plane]);
+        }
+    }
+
+    return 0;
+}
 
 static int webp_decode_frame_common(AVCodecContext *avctx, uint8_t *data, int size,
                                     int *got_frame, int key_frame)
@@ -1615,77 +1684,6 @@ exif_end:
     }
 
     return size;
-}
-
-int init_canvas_frame(WebPContext *s, int format, int key_frame)
-{
-    AVFrame *canvas = s->canvas_frame.f;
-    int height;
-    int ret;
-
-    // canvas is needed only for animation
-    if (!(s->vp8x_flags & VP8X_FLAG_ANIMATION))
-        return 0;
-
-    // avoid init for non-key frames whose format and size did not change
-    if (!key_frame &&
-        canvas->data[0] &&
-        canvas->format == format &&
-        canvas->width  == s->canvas_width &&
-        canvas->height == s->canvas_height)
-        return 0;
-
-    // canvas changes within IPPP sequences will loose thread sync
-    // because of the ThreadFrame reallocation and will wait forever
-    // so if frame-threading is used, forbid canvas changes and unlock
-    // previous frames
-    if (!key_frame && canvas->data[0]) {
-        if (s->avctx->thread_count > 1) {
-            av_log(s->avctx, AV_LOG_WARNING, "Canvas change detected. The output will be damaged. Use -threads 1 to try decoding with best effort.\n");
-            // unlock previous frames that have sent an _await() call
-            ff_thread_report_progress(&s->canvas_frame, INT_MAX, 0);
-            return AVERROR_PATCHWELCOME;
-        } else {
-            // warn for damaged frames
-            av_log(s->avctx, AV_LOG_WARNING, "Canvas change detected. The output will be damaged.\n");
-        }
-    }
-
-    s->avctx->pix_fmt = format;
-    canvas->format    = format;
-    canvas->width     = s->canvas_width;
-    canvas->height    = s->canvas_height;
-
-    // VP8 decoder changed the width and height in AVCodecContext.
-    // Change it back to the canvas size.
-    ret = ff_set_dimensions(s->avctx, s->canvas_width, s->canvas_height);
-    if (ret < 0)
-        return ret;
-
-    ff_thread_release_ext_buffer(s->avctx, &s->canvas_frame);
-    ret = ff_thread_get_ext_buffer(s->avctx, &s->canvas_frame, AV_GET_BUFFER_FLAG_REF);
-    if (ret < 0)
-        return ret;
-
-    if (canvas->format == AV_PIX_FMT_ARGB) {
-        height = canvas->height;
-        memset(canvas->data[0], 0, height * canvas->linesize[0]);
-    } else /* if (canvas->format == AV_PIX_FMT_YUVA420P) */ {
-        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(canvas->format);
-        for (int comp = 0; comp < desc->nb_components; comp++) {
-            int plane = desc->comp[comp].plane;
-
-            if (comp == 1 || comp == 2)
-                height = AV_CEIL_RSHIFT(canvas->height, desc->log2_chroma_h);
-            else
-                height = FFALIGN(canvas->height, 1 << desc->log2_chroma_h);
-
-            memset(canvas->data[plane], s->transparent_yuva[plane],
-                   height * canvas->linesize[plane]);
-        }
-    }
-
-    return 0;
 }
 
 /*
