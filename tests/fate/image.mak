@@ -567,6 +567,9 @@ fate-webp-rgb-lossy-q80: CMD = framecrc -i $(TARGET_SAMPLES)/webp/rgb_q80.webp
 FATE_WEBP += fate-webp-rgba-lossy-q80
 fate-webp-rgba-lossy-q80: CMD = framecrc -i $(TARGET_SAMPLES)/webp/rgba_q80.webp
 
+FATE_WEBP += fate-webp-anim
+fate-webp-anim: CMD = framecrc -i $(TARGET_SAMPLES)/webp/130227-100431-6817p.webp
+
 FATE_WEBP-$(call DEMDEC, IMAGE2, WEBP) += $(FATE_WEBP)
 FATE_IMAGE_FRAMECRC += $(FATE_WEBP-yes)
 fate-webp: $(FATE_WEBP-yes)
