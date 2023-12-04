@@ -14729,6 +14729,9 @@ Some examples:
 # Convert a video to 25 fps and record a MAP_FILE file with the default format of this filter
 ffmpeg -i INPUT -vf fps=fps=25 -stats_mux_pre MAP_FILE -stats_mux_pre_fmt "@{ptsi@} @{pts@} @{tb@}" OUTPUT
 
+# Sort MAP_FILE by increasing input PTS
+sort -n MAP_FILE
+
 # Use INPUT, OUTPUT and the MAP_FILE from above to compare the corresponding frames in INPUT and OUTPUT via SSIM
 ffmpeg -i INPUT -i OUTPUT -filter_complex '[0:v]fsync=file=MAP_FILE[ref];[1:v][ref]ssim' -f null -
 @end example
@@ -14737,6 +14740,9 @@ ffmpeg -i INPUT -i OUTPUT -filter_complex '[0:v]fsync=file=MAP_FILE[ref];[1:v][r
 @example
 # Convert a video to 25 fps and record a MAP_FILE file with a custom line format
 ffmpeg -i INPUT -vf fps=fps=25 -stats_mux_pre MAP_FILE -stats_mux_pre_fmt "@{n@} @{pts@} @{tb@} @{ni@} @{ptsi@} @{tbi@}" OUTPUT
+
+# Sort MAP_FILE by increasing input PTS
+sort -k 4 -n MAP_FILE
 
 # Use INPUT, OUTPUT and the MAP_FILE from above to compare the corresponding frames in INPUT and OUTPUT via SSIM
 ffmpeg -i INPUT -i OUTPUT -filter_complex '[0:v]fsync=file=MAP_FILE:fmt=%*li %li %i/%i %*li %li %*i/%*i[ref]:fmt_seq=oti;[1:v][ref]ssim' -f null -
