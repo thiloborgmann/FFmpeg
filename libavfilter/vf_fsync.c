@@ -38,24 +38,33 @@
 typedef struct FsyncContext {
     const AVClass *class;
     AVIOContext *avio_ctx;
+    AVFrame *last_frame;
     char *filename;
     char *format;
+    char *sequence;
     char *buf;
     char *cur;
     char *end;
-    AVFrame *last_frame;
+    int64_t ptsi;
+    int64_t pts;
+    int tb_num;
+    int tb_den;
+    void *param[4];
 } FsyncContext;
 
 #define OFFSET(x) offsetof(FsyncContext, x)
-#define DEFINE_OPTIONS(filt_name, FLAGS)                                                                                      \
-static const AVOption filt_name##_options[] = {                                                                               \
+#define DEFINE_OPTIONS(filt_name, FLAGS)                                                                                        \
+static const AVOption filt_name##_options[] = {                                                                                 \
     { "file",   "set the file name to use for frame sync", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags=FLAGS }, \
     { "f",      "set the file name to use for frame sync", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags=FLAGS }, \
-    { "format", "set the line format", OFFSET(format), AV_OPT_TYPE_STRING, { .str = "%li %li %i/%i" }, .flags=FLAGS }, \
-    { "fmt",    "set the line format", OFFSET(format), AV_OPT_TYPE_STRING, { .str = "%li %li %i/%i" }, .flags=FLAGS }, \
-    { NULL }                                                                                                                  \
+    { "format", "set the line format",          OFFSET(format), AV_OPT_TYPE_STRING, { .str = "%li %li %i/%i" }, .flags=FLAGS }, \
+    { "fmt",    "set the line format",          OFFSET(format), AV_OPT_TYPE_STRING, { .str = "%li %li %i/%i" }, .flags=FLAGS }, \
+    { "format_sequence", "set the sequence of parameters in line format",                                                       \
+                                                OFFSET(sequence), AV_OPT_TYPE_STRING, { .str = "iot" }, .flags=FLAGS },         \
+    { "fmt_seq",         "set the sequence of parameters in line format",                                                       \
+                                                OFFSET(sequence), AV_OPT_TYPE_STRING, { .str = "iot" }, .flags=FLAGS },         \
+    { NULL }                                                                                                                    \
 }
-//"%li %*i/%*i %li %i/%i"
 
 // fills the buffer from cur to end, add \0 at EOF
 static int buf_fill(FsyncContext *ctx)
@@ -136,8 +145,6 @@ static int activate(AVFilterContext *ctx)
     AVFilterLink *outlink = ctx->outputs[0];
 
     int ret, line_count;
-    int64_t ptsi, pts;
-    int tb_num, tb_den;
     AVFrame *frame;
 
     FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink);
@@ -159,7 +166,8 @@ static int activate(AVFilterContext *ctx)
     }
 
     if (s->last_frame) {
-        ret = av_sscanf(s->cur, s->format, &ptsi, &pts, &tb_num, &tb_den);
+        // default: av_sscanf(s->cur, "%li %li %i/%i", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
+        ret = av_sscanf(s->cur, s->format, s->param[0], s->param[1], s->param[2], s->param[3]);
         if (ret != 4) {
             av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i).\n", ret);
             return AVERROR_INVALIDDATA;
@@ -167,8 +175,8 @@ static int activate(AVFilterContext *ctx)
 
         av_log(ctx, AV_LOG_DEBUG, "frame %lli ", s->last_frame->pts);
 
-        if (s->last_frame->pts >= ptsi) {
-            av_log(ctx, AV_LOG_DEBUG, "> %lli: DUP LAST with pts = %lli\n", ptsi, pts);
+        if (s->last_frame->pts >= s->ptsi) {
+            av_log(ctx, AV_LOG_WARNING, "> %lli: DUP LAST with pts = %lli\n", s->ptsi, s->pts);
 
             // clone frame
             frame = av_frame_clone(s->last_frame);
@@ -178,9 +186,9 @@ static int activate(AVFilterContext *ctx)
             av_frame_copy_props(frame, s->last_frame);
 
             // set output pts and timebase
-            frame->pts = pts;
-            frame->time_base.num = tb_num;
-            frame->time_base.den = tb_den;
+            frame->pts = s->pts;
+            frame->time_base.num = s->tb_num;
+            frame->time_base.den = s->tb_den;
 
             // advance cur to eol, skip over eol in the next call
             s->cur += line_count;
@@ -191,8 +199,8 @@ static int activate(AVFilterContext *ctx)
 
             // filter frame
             return ff_filter_frame(outlink, frame);
-        } else if (s->last_frame->pts < ptsi) {
-            av_log(ctx, AV_LOG_DEBUG, "< %lli: DROP\n", ptsi);
+        } else if (s->last_frame->pts < s->ptsi) {
+            av_log(ctx, AV_LOG_WARNING, "< %lli: DROP\n", s->ptsi);
             av_frame_free(&s->last_frame);
 
             // call again
@@ -217,7 +225,8 @@ end:
 static av_cold int fsync_init(AVFilterContext *ctx)
 {
     FsyncContext *s = ctx->priv;
-    int ret;
+    int ret, i;
+    int j = 0;
 
     av_log(ctx, AV_LOG_DEBUG, "filename: %s\n", s->filename);
 
@@ -235,6 +244,23 @@ static av_cold int fsync_init(AVFilterContext *ctx)
     ret = buf_fill(s);
     if (ret < 0)
         return ret;
+
+    av_log(ctx, AV_LOG_DEBUG, "sequence: %s\n", s->sequence);
+
+    for (i = 0; i < 3; i++) {
+        switch (s->sequence[i]) {
+            case 'i':
+                s->param[j++] = &s->ptsi;
+                break;
+            case 'o':
+                s->param[j++] = &s->pts;
+                break;
+            case 't':
+                s->param[j++] = &s->tb_num;
+                s->param[j++] = &s->tb_den;
+                break;
+        }
+    }
 
     return 0;
 }
