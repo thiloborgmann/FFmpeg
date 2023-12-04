@@ -14681,6 +14681,69 @@ option may cause flicker since the B-Frames have often larger QP. Default is
 
 @end table
 
+@anchor{fsync}
+@section fsync
+
+Synchronize video frames with an external mapping from a file.
+
+For each input PTS given in the map file it either drops or creates as many frames as necessary to recreate the sequence of output frames given in the map file.
+
+This filter is useful to recreate the output frames of a framerate conversion by the @ref{fps} filter, recorded into a map file using the ffmpeg option @code{-stats_mux_pre}, and do further processing to the corresponding frames e.g. quality comparison.
+
+The filter assumes the map file is sorted by increasing input PTS.
+
+The filter accepts the following options:
+@table @option
+
+@item file, f
+The filename of the map file to be used.
+Each line must contain one input PTS, one output PTS and one output timebase as NUM/DEN.
+There may be more information present in a line.
+In that case use the @code{format, fmt} option to specify which information per line will be used.
+
+@item format, fmt
+A sscanf compatible format string describing the line format of the map file.
+The default is @code{%li %li %i/%i} which contains only the minimum of information needed.
+This default value corresponds to the format written by @code{-stats_mux_pre_fmt "@{ptsi@} @{pts@} @{tb@}"}.
+
+@item format_sequence, fmt_seq
+The sequence in which the input PTS, output PTS and output timebase appears in each line of the map file.
+This sequence must consist of a combination of the following three characters, each of them appearing exactly once:
+@table @option
+@item i
+The input PTS
+@item o
+The output PTS
+@item t
+The output timebase
+@end table
+The default is @code{"iot"}.
+This default value corresponds to the format written by @code{-stats_mux_pre_fmt "@{ptsi@} @{pts@} @{tb@}"}.
+
+@end table
+
+Some examples:
+@itemize
+@item Using the default format and format sequence of the filter:
+@example
+# Convert a video to 25 fps and record a MAP_FILE file with the default format of this filter
+ffmpeg -i INPUT -vf fps=fps=25 -stats_mux_pre MAP_FILE -stats_mux_pre_fmt "@{ptsi@} @{pts@} @{tb@}" OUTPUT
+
+# Use INPUT, OUTPUT and the MAP_FILE from above to compare the corresponding frames in INPUT and OUTPUT via SSIM
+ffmpeg -i INPUT -i OUTPUT -filter_complex '[0:v]fsync=file=MAP_FILE[ref];[1:v][ref]ssim' -f null -
+@end example
+
+@item Using a custom format and format sequence:
+@example
+# Convert a video to 25 fps and record a MAP_FILE file with a custom line format
+ffmpeg -i INPUT -vf fps=fps=25 -stats_mux_pre MAP_FILE -stats_mux_pre_fmt "@{n@} @{pts@} @{tb@} @{ni@} @{ptsi@} @{tbi@}" OUTPUT
+
+# Use INPUT, OUTPUT and the MAP_FILE from above to compare the corresponding frames in INPUT and OUTPUT via SSIM
+ffmpeg -i INPUT -i OUTPUT -filter_complex '[0:v]fsync=file=MAP_FILE:fmt=%*li %li %i/%i %*li %li %*i/%*i[ref]:fmt_seq=oti;[1:v][ref]ssim' -f null -
+@end example
+@end itemize
+
+
 @section gblur
 
 Apply Gaussian blur filter.
