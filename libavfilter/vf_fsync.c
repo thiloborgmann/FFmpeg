@@ -37,19 +37,19 @@
 
 typedef struct FsyncContext {
     const AVClass *class;
-    AVIOContext *avio_ctx;
-    AVFrame *last_frame;
-    char *filename;
-    char *format;
-    char *sequence;
-    char *buf;
-    char *cur;
-    char *end;
-    int64_t ptsi;
-    int64_t pts;
-    int tb_num;
-    int tb_den;
-    void *param[4];
+    AVIOContext *avio_ctx; // reading the map file
+    AVFrame *last_frame;   // buffering the last frame for duplicating eventually
+    char *filename;        // user-specified map file
+    char *format;          // sscanf compatible user-specified line format of the map file
+    char *sequence;        // user-specified sequence of the input pts, output pts and output timebase
+    char *buf;             // line buffer for the map file
+    char *cur;             // current position in the line buffer
+    char *end;             // end pointer of the line buffer
+    int64_t ptsi;          // input pts to map to [0-N] output pts
+    int64_t pts;           // output pts
+    int64_t tb_num;        // output timebase num
+    int64_t tb_den;        // output timebase den
+    int64_t *param[4];     // mapping of ptsi, pts, tb_num, tb_den into user-specified format
 } FsyncContext;
 
 #define OFFSET(x) offsetof(FsyncContext, x)
@@ -176,7 +176,7 @@ static int activate(AVFilterContext *ctx)
         av_log(ctx, AV_LOG_DEBUG, "frame %lli ", s->last_frame->pts);
 
         if (s->last_frame->pts >= s->ptsi) {
-            av_log(ctx, AV_LOG_WARNING, "> %lli: DUP LAST with pts = %lli\n", s->ptsi, s->pts);
+            av_log(ctx, AV_LOG_DEBUG, "> %lli: DUP LAST with pts = %lli\n", s->ptsi, s->pts);
 
             // clone frame
             frame = av_frame_clone(s->last_frame);
@@ -187,8 +187,8 @@ static int activate(AVFilterContext *ctx)
 
             // set output pts and timebase
             frame->pts = s->pts;
-            frame->time_base.num = s->tb_num;
-            frame->time_base.den = s->tb_den;
+            frame->time_base.num = (int)s->tb_num;
+            frame->time_base.den = (int)s->tb_den;
 
             // advance cur to eol, skip over eol in the next call
             s->cur += line_count;
@@ -200,7 +200,7 @@ static int activate(AVFilterContext *ctx)
             // filter frame
             return ff_filter_frame(outlink, frame);
         } else if (s->last_frame->pts < s->ptsi) {
-            av_log(ctx, AV_LOG_WARNING, "< %lli: DROP\n", s->ptsi);
+            av_log(ctx, AV_LOG_DEBUG, "< %lli: DROP\n", s->ptsi);
             av_frame_free(&s->last_frame);
 
             // call again
@@ -227,6 +227,9 @@ static av_cold int fsync_init(AVFilterContext *ctx)
     FsyncContext *s = ctx->priv;
     int ret, i;
     int j = 0;
+    int has_i = 0;
+    int has_o = 0;
+    int has_t = 0;
 
     av_log(ctx, AV_LOG_DEBUG, "filename: %s\n", s->filename);
 
@@ -247,6 +250,43 @@ static av_cold int fsync_init(AVFilterContext *ctx)
 
     av_log(ctx, AV_LOG_DEBUG, "sequence: %s\n", s->sequence);
 
+#define INVALID_SEQ() {                                                         \
+    av_log(ctx, AV_LOG_ERROR, "Invalid fomat sequence \"%s\".\n", s->sequence); \
+    return AVERROR_INVALIDDATA;                                                 \
+}
+
+#define CHECK_SEQ(c) { \
+    if (has_##c) {     \
+        INVALID_SEQ(); \
+    } else {           \
+        has_##c = 1;   \
+    }                  \
+}
+
+    // format sequene must be exactly 3 chars wide
+    if (av_strnlen(s->sequence, 4) != 3) {
+        INVALID_SEQ();
+    }
+
+    // format sequence must contain 'i', 'o', 't' exactly once
+    for (i = 0; i < 3; i++) {
+        switch (s->sequence[i]) {
+            case 'i':
+                CHECK_SEQ(i);
+                break;
+            case 'o':
+                CHECK_SEQ(o);
+                break;
+            case 't':
+                CHECK_SEQ(t);
+                break;
+        }
+    }
+    if (!has_i || !has_o || !has_t) {
+        INVALID_SEQ();
+    }
+
+    // apply format sequence, mapping param[] pointers to actual variables
     for (i = 0; i < 3; i++) {
         switch (s->sequence[i]) {
             case 'i':
