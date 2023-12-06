@@ -166,10 +166,13 @@ static int activate(AVFilterContext *ctx)
     }
 
     if (s->last_frame) {
+        av_log(ctx, AV_LOG_DEBUG, "format = %s\n", s->format);
+
         // default: av_sscanf(s->cur, "%li %li %i/%i", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
         ret = av_sscanf(s->cur, s->format, s->param[0], s->param[1], s->param[2], s->param[3]);
         if (ret != 4) {
             av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i).\n", ret);
+            ff_outlink_set_status(outlink, AVERROR_INVALIDDATA, AV_NOPTS_VALUE);
             return AVERROR_INVALIDDATA;
         }
 
@@ -181,6 +184,7 @@ static int activate(AVFilterContext *ctx)
             // clone frame
             frame = av_frame_clone(s->last_frame);
             if (!frame) {
+                ff_outlink_set_status(outlink, AVERROR(ENOMEM), AV_NOPTS_VALUE);
                 return AVERROR(ENOMEM);
             }
             av_frame_copy_props(frame, s->last_frame);
