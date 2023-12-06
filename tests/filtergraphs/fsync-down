@@ -1,0 +1,2 @@
+testsrc2=r=25:d=1 [ref];
+[ref] fsync=f=tests/data/maps/fsync-down:fmt=%li %*i/%*i %li %i/%i:fmt_seq=iot
