@@ -191,8 +191,7 @@ static int activate(AVFilterContext *ctx)
 
             // set output pts and timebase
             frame->pts = s->pts;
-            frame->time_base.num = (int)s->tb_num;
-            frame->time_base.den = (int)s->tb_den;
+            frame->time_base = av_make_q((int)s->tb_num, (int)s->tb_den);
 
             // advance cur to eol, skip over eol in the next call
             s->cur += line_count;
@@ -226,6 +225,27 @@ end:
     return FFERROR_NOT_READY;
 }
 
+static int fsync_config_props(AVFilterLink* outlink)
+{
+    AVFilterContext *ctx    = outlink->src;
+    FsyncContext    *s      = ctx->priv;
+    int ret;
+
+    // read first line to get output timebase
+    // default: av_sscanf(s->cur, "%li %li %i/%i", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
+    ret = av_sscanf(s->cur, s->format, s->param[0], s->param[1], s->param[2], s->param[3]);
+    if (ret != 4) {
+        av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i).\n", ret);
+        ff_outlink_set_status(outlink, AVERROR_INVALIDDATA, AV_NOPTS_VALUE);
+        return AVERROR_INVALIDDATA;
+    }
+
+    outlink->frame_rate = av_make_q(1, 0); // unknown or dynamic
+    outlink->time_base  = av_make_q((int)s->tb_num, (int)s->tb_den);
+
+    return 0;
+}
+
 static av_cold int fsync_init(AVFilterContext *ctx)
 {
     FsyncContext *s = ctx->priv;
@@ -252,6 +272,7 @@ static av_cold int fsync_init(AVFilterContext *ctx)
     if (ret < 0)
         return ret;
 
+    // determine format sequence
     av_log(ctx, AV_LOG_DEBUG, "sequence: %s\n", s->sequence);
 
 #define INVALID_SEQ() {                                                         \
@@ -333,6 +354,14 @@ static const enum AVPixelFormat pix_fmts[] = {
     AV_PIX_FMT_NONE
 };
 
+static const AVFilterPad avfilter_vf_fsync_outputs[] = {
+    {
+        .name          = "default",
+        .type          = AVMEDIA_TYPE_VIDEO,
+        .config_props  = fsync_config_props,
+    },
+};
+
 const AVFilter ff_vf_fsync = {
     .name          = "fsync",
     .description   = NULL_IF_CONFIG_SMALL("Synchronize video frames from external source."),
@@ -343,6 +372,6 @@ const AVFilter ff_vf_fsync = {
     .activate      = activate,
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     FILTER_INPUTS(ff_video_default_filterpad),
-    FILTER_OUTPUTS(ff_video_default_filterpad),
+    FILTER_OUTPUTS(avfilter_vf_fsync_outputs),
     .flags         = AVFILTER_FLAG_METADATA_ONLY,
 };
