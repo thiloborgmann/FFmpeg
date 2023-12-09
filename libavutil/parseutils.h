@@ -22,6 +22,7 @@
 #include <time.h>
 
 #include "rational.h"
+#include "mem.h"
 
 /**
  * @file
@@ -193,5 +194,106 @@ char *av_small_strptime(const char *p, const char *fmt, struct tm *dt);
  * Convert the decomposed UTC time in tm to a time_t value.
  */
 time_t av_timegm(struct tm *tm);
+
+typedef enum AVEncStatsType {
+    ENC_STATS_LITERAL = 0,
+    ENC_STATS_FILE_IDX,
+    ENC_STATS_STREAM_IDX,
+    ENC_STATS_FRAME_NUM,
+    ENC_STATS_FRAME_NUM_IN,
+    ENC_STATS_TIMEBASE,
+    ENC_STATS_TIMEBASE_IN,
+    ENC_STATS_PTS,
+    ENC_STATS_PTS_TIME,
+    ENC_STATS_PTS_IN,
+    ENC_STATS_PTS_TIME_IN,
+    ENC_STATS_DTS,
+    ENC_STATS_DTS_TIME,
+    ENC_STATS_SAMPLE_NUM,
+    ENC_STATS_NB_SAMPLES,
+    ENC_STATS_PKT_SIZE,
+    ENC_STATS_BITRATE,
+    ENC_STATS_AVG_BITRATE,
+} AVEncStatsType;
+
+/**
+ * Structure describing an encoding stats component.
+ */
+typedef struct AVEncStatsComponent {
+    /**
+     * The type of this component.
+     */
+    AVEncStatsType type;
+    /**
+     * The string representation of this component.
+     */
+    uint8_t *str;
+    /**
+     * The length of the string.
+     */
+    size_t   str_len;
+} AVEncStatsComponent;
+
+/**
+ * Structure describing an encoding stats format specifier.
+ */
+typedef struct AVEncStatsFormatSpecifier {
+    /**
+     * The type of this format specifier.
+     */
+    enum AVEncStatsType  type;
+    /**
+     * The string representation of this format specifier.
+     */
+    const char          *str;
+    /**
+     * Flag if this format specifier is only valid before encoding.
+     */
+    int                  pre_only:1;
+    /**
+     * Flag if this format specifier is only valid after encoding.
+     */
+    int                  post_only:1;
+    /**
+     * Flag if this format specifier requires an associated input
+     * stream for it to be processed.
+     */
+    int                  need_input_data:1;
+} AVEncStatsFormatSpecifier;
+
+/**
+ * Get the number of available enc stats format specifiers.
+ */
+size_t av_get_nb_stats_fmt_specs(void);
+
+/**
+ * Get a copy of an enc stats format specifier.
+ *
+ * @param *fmt_spec Destination for the copy of the format specifier.
+ *                  Has to be previously allocated.
+ *
+ * @param idx       Index to the table of format specifiers.
+ *
+ * @return          Return 0 on success, a negative value corresponding
+ *                  to an AVERROR code otherwise.
+ */
+int av_get_stats_fmt_spec(AVEncStatsFormatSpecifier *fmt_spec, int idx);
+
+/**
+ * Parse an enc stats format string into an array of AVEncStatsComponent.
+ *
+ * @param components Pointer to the array of AVEncStatsComponent to store
+ *                   the parsed elements. The arrary will be reallocated
+ *                   in the process if any elements are found.
+ *
+ * @param nb_components Pointer to the number of components in the array.
+ *
+ * @param fmt_spec   The format string to parse for components.
+ *
+ * @return          Return 0 on success, a negative value corresponding
+ *                  to an AVERROR code otherwise.
+ *
+ */
+int av_parse_enc_stats_components(AVEncStatsComponent **components, int *nb_components, const char *fmt_spec);
 
 #endif /* AVUTIL_PARSEUTILS_H */

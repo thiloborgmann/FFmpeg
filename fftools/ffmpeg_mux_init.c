@@ -242,132 +242,27 @@ void of_enc_stats_close(void)
     nb_enc_stats_files = 0;
 }
 
-static int unescape(char **pdst, size_t *dst_len,
-                    const char **pstr, char delim)
-{
-    const char *str = *pstr;
-    char *dst;
-    size_t len, idx;
-
-    *pdst = NULL;
-
-    len = strlen(str);
-    if (!len)
-        return 0;
-
-    dst = av_malloc(len + 1);
-    if (!dst)
-        return AVERROR(ENOMEM);
-
-    for (idx = 0; *str; idx++, str++) {
-        if (str[0] == '\\' && str[1])
-            str++;
-        else if (*str == delim)
-            break;
-
-        dst[idx] = *str;
-    }
-    if (!idx) {
-        av_freep(&dst);
-        return 0;
-    }
-
-    dst[idx] = 0;
-
-    *pdst    = dst;
-    *dst_len = idx;
-    *pstr    = str;
-
-    return 0;
-}
-
 static int enc_stats_init(OutputStream *ost, EncStats *es, int pre,
                           const char *path, const char *fmt_spec)
 {
-    static const struct {
-        enum EncStatsType  type;
-        const char        *str;
-        int                pre_only:1;
-        int                post_only:1;
-        int                need_input_data:1;
-    } fmt_specs[] = {
-        { ENC_STATS_FILE_IDX,       "fidx"                      },
-        { ENC_STATS_STREAM_IDX,     "sidx"                      },
-        { ENC_STATS_FRAME_NUM,      "n"                         },
-        { ENC_STATS_FRAME_NUM_IN,   "ni",       0, 0, 1         },
-        { ENC_STATS_TIMEBASE,       "tb"                        },
-        { ENC_STATS_TIMEBASE_IN,    "tbi",      0, 0, 1         },
-        { ENC_STATS_PTS,            "pts"                       },
-        { ENC_STATS_PTS_TIME,       "t"                         },
-        { ENC_STATS_PTS_IN,         "ptsi",     0, 0, 1         },
-        { ENC_STATS_PTS_TIME_IN,    "ti",       0, 0, 1         },
-        { ENC_STATS_DTS,            "dts",      0, 1            },
-        { ENC_STATS_DTS_TIME,       "dt",       0, 1            },
-        { ENC_STATS_SAMPLE_NUM,     "sn",       1               },
-        { ENC_STATS_NB_SAMPLES,     "samp",     1               },
-        { ENC_STATS_PKT_SIZE,       "size",     0, 1            },
-        { ENC_STATS_BITRATE,        "br",       0, 1            },
-        { ENC_STATS_AVG_BITRATE,    "abr",      0, 1            },
-    };
-    const char *next = fmt_spec;
-
     int ret;
+    int j;
 
-    while (*next) {
-        EncStatsComponent *c;
-        char *val;
-        size_t val_len;
+    ret = av_parse_enc_stats_components(&es->components, &es->nb_components, fmt_spec);
+    if (ret < 0)
+        goto fail;
 
-        // get the sequence up until next opening brace
-        ret = unescape(&val, &val_len, &next, '{');
-        if (ret < 0)
-            return ret;
+    for (j = 0; j < es->nb_components; j++) {
+        AVEncStatsComponent *c = &es->components[j];
+        char *val = c->str;
 
-        if (val) {
-            ret = GROW_ARRAY(es->components, es->nb_components);
-            if (ret < 0) {
-                av_freep(&val);
-                return ret;
-            }
+        for (size_t i = 0; i < av_get_nb_stats_fmt_specs(); i++) {
+            AVEncStatsFormatSpecifier f;
+            if (av_get_stats_fmt_spec(&f, i))
+                goto fail;
 
-            c          = &es->components[es->nb_components - 1];
-            c->type    = ENC_STATS_LITERAL;
-            c->str     = val;
-            c->str_len = val_len;
-        }
-
-        if (!*next)
-            break;
-        next++;
-
-        // get the part inside braces
-        ret = unescape(&val, &val_len, &next, '}');
-        if (ret < 0)
-            return ret;
-
-        if (!val) {
-            av_log(NULL, AV_LOG_ERROR,
-                   "Empty formatting directive in: %s\n", fmt_spec);
-            return AVERROR(EINVAL);
-        }
-
-        if (!*next) {
-            av_log(NULL, AV_LOG_ERROR,
-                   "Missing closing brace in: %s\n", fmt_spec);
-            ret = AVERROR(EINVAL);
-            goto fail;
-        }
-        next++;
-
-        ret = GROW_ARRAY(es->components, es->nb_components);
-        if (ret < 0)
-            goto fail;
-
-        c = &es->components[es->nb_components - 1];
-
-        for (size_t i = 0; i < FF_ARRAY_ELEMS(fmt_specs); i++) {
-            if (!strcmp(val, fmt_specs[i].str)) {
-                if ((pre && fmt_specs[i].post_only) || (!pre && fmt_specs[i].pre_only)) {
+            if (!strcmp(val, f.str)) {
+                if ((pre && f.post_only) || (!pre && f.pre_only)) {
                     av_log(NULL, AV_LOG_ERROR,
                            "Format directive '%s' may only be used %s-encoding\n",
                            val, pre ? "post" : "pre");
@@ -375,9 +270,7 @@ static int enc_stats_init(OutputStream *ost, EncStats *es, int pre,
                     goto fail;
                 }
 
-                c->type = fmt_specs[i].type;
-
-                if (fmt_specs[i].need_input_data && !ost->ist) {
+                if (f.need_input_data && !ost->ist) {
                     av_log(ost, AV_LOG_WARNING,
                            "Format directive '%s' is unavailable, because "
                            "this output stream has no associated input stream\n",
@@ -387,20 +280,16 @@ static int enc_stats_init(OutputStream *ost, EncStats *es, int pre,
                 break;
             }
         }
-
-        if (!c->type) {
-            av_log(NULL, AV_LOG_ERROR, "Invalid format directive: %s\n", val);
-            ret = AVERROR(EINVAL);
-            goto fail;
-        }
-
-fail:
-        av_freep(&val);
-        if (ret < 0)
-            return ret;
     }
 
     ret = enc_stats_get_file(&es->io, path);
+fail:
+    for (j = 0; j < es->nb_components; j++) {
+        AVEncStatsComponent *c = &es->components[j];
+        if (c->type != ENC_STATS_LITERAL) {
+            av_freep(&c->str);
+        }
+    }
     if (ret < 0)
         return ret;
 

@@ -42,6 +42,7 @@
 #include "libavutil/eval.h"
 #include "libavutil/fifo.h"
 #include "libavutil/hwcontext.h"
+#include "libavutil/parseutils.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/rational.h"
 #include "libavutil/thread.h"
@@ -437,36 +438,8 @@ enum forced_keyframes_const {
 #define ABORT_ON_FLAG_EMPTY_OUTPUT        (1 <<  0)
 #define ABORT_ON_FLAG_EMPTY_OUTPUT_STREAM (1 <<  1)
 
-enum EncStatsType {
-    ENC_STATS_LITERAL = 0,
-    ENC_STATS_FILE_IDX,
-    ENC_STATS_STREAM_IDX,
-    ENC_STATS_FRAME_NUM,
-    ENC_STATS_FRAME_NUM_IN,
-    ENC_STATS_TIMEBASE,
-    ENC_STATS_TIMEBASE_IN,
-    ENC_STATS_PTS,
-    ENC_STATS_PTS_TIME,
-    ENC_STATS_PTS_IN,
-    ENC_STATS_PTS_TIME_IN,
-    ENC_STATS_DTS,
-    ENC_STATS_DTS_TIME,
-    ENC_STATS_SAMPLE_NUM,
-    ENC_STATS_NB_SAMPLES,
-    ENC_STATS_PKT_SIZE,
-    ENC_STATS_BITRATE,
-    ENC_STATS_AVG_BITRATE,
-};
-
-typedef struct EncStatsComponent {
-    enum EncStatsType type;
-
-    uint8_t *str;
-    size_t   str_len;
-} EncStatsComponent;
-
 typedef struct EncStats {
-    EncStatsComponent  *components;
+    AVEncStatsComponent  *components;
     int              nb_components;
 
     AVIOContext        *io;

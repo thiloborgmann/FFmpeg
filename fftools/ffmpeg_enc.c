@@ -30,6 +30,7 @@
 #include "libavutil/frame.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/log.h"
+#include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/rational.h"
 #include "libavutil/timestamp.h"
@@ -499,7 +500,7 @@ void enc_stats_write(OutputStream *ost, EncStats *es,
     }
 
     for (size_t i = 0; i < es->nb_components; i++) {
-        const EncStatsComponent *c = &es->components[i];
+        const AVEncStatsComponent *c = &es->components[i];
 
         switch (c->type) {
         case ENC_STATS_LITERAL:         avio_write (io, c->str,     c->str_len);                    continue;

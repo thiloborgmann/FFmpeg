@@ -788,3 +788,178 @@ int av_find_info_tag(char *arg, int arg_size, const char *tag1, const char *info
     }
     return 0;
 }
+
+static const AVEncStatsFormatSpecifier fmt_specs[] = {
+    { ENC_STATS_FILE_IDX,       "fidx"                      },
+    { ENC_STATS_STREAM_IDX,     "sidx"                      },
+    { ENC_STATS_FRAME_NUM,      "n"                         },
+    { ENC_STATS_FRAME_NUM_IN,   "ni",       0, 0, 1         },
+    { ENC_STATS_TIMEBASE,       "tb"                        },
+    { ENC_STATS_TIMEBASE_IN,    "tbi",      0, 0, 1         },
+    { ENC_STATS_PTS,            "pts"                       },
+    { ENC_STATS_PTS_TIME,       "t"                         },
+    { ENC_STATS_PTS_IN,         "ptsi",     0, 0, 1         },
+    { ENC_STATS_PTS_TIME_IN,    "ti",       0, 0, 1         },
+    { ENC_STATS_DTS,            "dts",      0, 1            },
+    { ENC_STATS_DTS_TIME,       "dt",       0, 1            },
+    { ENC_STATS_SAMPLE_NUM,     "sn",       1               },
+    { ENC_STATS_NB_SAMPLES,     "samp",     1               },
+    { ENC_STATS_PKT_SIZE,       "size",     0, 1            },
+    { ENC_STATS_BITRATE,        "br",       0, 1            },
+    { ENC_STATS_AVG_BITRATE,    "abr",      0, 1            },
+};
+
+size_t av_get_nb_stats_fmt_specs(void)
+{
+    return sizeof(fmt_specs) / sizeof(*fmt_specs);
+}
+
+int av_get_stats_fmt_spec(AVEncStatsFormatSpecifier *fmt_spec, int idx)
+{
+    if (!fmt_spec || idx >= av_get_nb_stats_fmt_specs())
+        return AVERROR(EINVAL);
+
+    *fmt_spec = fmt_specs[idx];
+    return 0;
+}
+
+static int unescape(char **pdst, size_t *dst_len,
+                    const char **pstr, char delim)
+{
+    const char *str = *pstr;
+    char *dst;
+    size_t len, idx;
+
+    *pdst = NULL;
+
+    len = strlen(str);
+    if (!len)
+        return 0;
+
+    dst = av_malloc(len + 1);
+    if (!dst)
+        return AVERROR(ENOMEM);
+
+    for (idx = 0; *str; idx++, str++) {
+        if (str[0] == '\\' && str[1])
+            str++;
+        else if (*str == delim)
+            break;
+
+        dst[idx] = *str;
+    }
+    if (!idx) {
+        av_freep(&dst);
+        return 0;
+    }
+
+    dst[idx] = 0;
+
+    *pdst    = dst;
+    *dst_len = idx;
+    *pstr    = str;
+
+    return 0;
+}
+
+static int grow_array(void **array, int elem_size, int *size, int new_size)
+{
+    if (new_size >= INT_MAX / elem_size) {
+        av_log(NULL, AV_LOG_ERROR, "Array too big.\n");
+        return AVERROR(ERANGE);
+    }
+    if (*size < new_size) {
+        uint8_t *tmp = av_realloc_array(*array, new_size, elem_size);
+        if (!tmp)
+            return AVERROR(ENOMEM);
+        memset(tmp + *size*elem_size, 0, (new_size-*size) * elem_size);
+        *size = new_size;
+        *array = tmp;
+        return 0;
+    }
+    return 0;
+}
+
+#define GROW_ARRAY(array, nb_elems)\
+    grow_array((void**)&array, sizeof(*array), &nb_elems, nb_elems + 1)
+
+int av_parse_enc_stats_components(AVEncStatsComponent **components, int *nb_components, const char *fmt_spec)
+{
+    const char *next = fmt_spec;
+    int ret;
+
+    while (*next) {
+        AVEncStatsComponent *c;
+        char *val;
+        size_t val_len;
+
+        // get the sequence up until next opening brace
+        ret = unescape(&val, &val_len, &next, '{');
+        if (ret < 0)
+            return ret;
+
+        if (val) {
+            ret = GROW_ARRAY(*components, *nb_components);
+            if (ret < 0) {
+                av_freep(&val);
+                return ret;
+            }
+
+            c          = &((*components)[*nb_components - 1]);
+            c->type    = ENC_STATS_LITERAL;
+            c->str     = val;
+            c->str_len = val_len;
+        }
+
+        if (!*next)
+            break;
+        next++;
+
+        // get the part inside braces
+        ret = unescape(&val, &val_len, &next, '}');
+        if (ret < 0)
+            return ret;
+
+        if (!val) {
+            av_log(NULL, AV_LOG_ERROR,
+                   "Empty formatting directive in: %s\n", fmt_spec);
+            return AVERROR(EINVAL);
+        }
+
+        if (!*next) {
+            av_log(NULL, AV_LOG_ERROR,
+                   "Missing closing brace in: %s\n", fmt_spec);
+            ret = AVERROR(EINVAL);
+            goto fail;
+        }
+        next++;
+
+        ret = GROW_ARRAY(*components, *nb_components);
+        if (ret < 0)
+            goto fail;
+
+        c = &(*components)[*nb_components - 1];
+
+        for (int i = 0; i < FF_ARRAY_ELEMS(fmt_specs); i++) {
+            if (!strcmp(val, fmt_specs[i].str)) {
+                c->type    = fmt_specs[i].type;
+                c->str     = val;
+                c->str_len = val_len;
+                break;
+            }
+        }
+
+        if (!c->type) {
+            av_log(NULL, AV_LOG_ERROR, "Invalid format directive: %s\n", val);
+            ret = AVERROR(EINVAL);
+            av_freep(&val);
+            goto fail;
+        }
+
+fail:
+        if (ret < 0)
+            return ret;
+    }
+
+    return 0;
+}
