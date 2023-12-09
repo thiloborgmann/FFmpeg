@@ -29,9 +29,9 @@
 #include "libavutil/error.h"
 #include "libavutil/opt.h"
 #include "libavformat/avio.h"
+#include "libavutil/parseutils.h"
 #include "video.h"
 #include "filters.h"
-#include <sys/errno.h>
 
 #define BUF_SIZE 256
 
@@ -40,8 +40,8 @@ typedef struct FsyncContext {
     AVIOContext *avio_ctx; // reading the map file
     AVFrame *last_frame;   // buffering the last frame for duplicating eventually
     char *filename;        // user-specified map file
-    char *format;          // sscanf compatible user-specified line format of the map file
-    char *sequence;        // user-specified sequence of the input pts, output pts and output timebase
+    char *format;          // user-specified line format according to -stats_enc* options
+    char *format_str;      // sscanf compatible user-specified line format of the map file
     char *buf;             // line buffer for the map file
     char *cur;             // current position in the line buffer
     char *end;             // end pointer of the line buffer
@@ -57,12 +57,8 @@ typedef struct FsyncContext {
 static const AVOption filt_name##_options[] = {                                                                                 \
     { "file",   "set the file name to use for frame sync", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags=FLAGS }, \
     { "f",      "set the file name to use for frame sync", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags=FLAGS }, \
-    { "format", "set the line format",          OFFSET(format), AV_OPT_TYPE_STRING, { .str = "%li %li %i/%i" }, .flags=FLAGS }, \
-    { "fmt",    "set the line format",          OFFSET(format), AV_OPT_TYPE_STRING, { .str = "%li %li %i/%i" }, .flags=FLAGS }, \
-    { "format_sequence", "set the sequence of parameters in line format",                                                       \
-                                                OFFSET(sequence), AV_OPT_TYPE_STRING, { .str = "iot" }, .flags=FLAGS },         \
-    { "fmt_seq",         "set the sequence of parameters in line format",                                                       \
-                                                OFFSET(sequence), AV_OPT_TYPE_STRING, { .str = "iot" }, .flags=FLAGS },         \
+    { "format", "set the line format",                     OFFSET(format),   AV_OPT_TYPE_STRING, { .str = "{ptsi} {pts} {tb}" }, .flags=FLAGS }, \
+    { "fmt",    "set the line format",                     OFFSET(format),   AV_OPT_TYPE_STRING, { .str = "{ptsi} {pts} {tb}" }, .flags=FLAGS }, \
     { NULL }                                                                                                                    \
 }
 
@@ -168,10 +164,10 @@ static int activate(AVFilterContext *ctx)
     if (s->last_frame) {
         av_log(ctx, AV_LOG_DEBUG, "format = %s\n", s->format);
 
-        // default: av_sscanf(s->cur, "%li %li %i/%i", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
-        ret = av_sscanf(s->cur, s->format, s->param[0], s->param[1], s->param[2], s->param[3]);
+        // default: av_sscanf(s->cur, "{ptsi} {pts} {tb}", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
+        ret = av_sscanf(s->cur, s->format_str, s->param[0], s->param[1], s->param[2], s->param[3]);
         if (ret != 4) {
-            av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i).\n", ret);
+            av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i / 4).\n", ret);
             ff_outlink_set_status(outlink, AVERROR_INVALIDDATA, AV_NOPTS_VALUE);
             return AVERROR_INVALIDDATA;
         }
@@ -227,15 +223,15 @@ end:
 
 static int fsync_config_props(AVFilterLink* outlink)
 {
-    AVFilterContext *ctx    = outlink->src;
-    FsyncContext    *s      = ctx->priv;
+    AVFilterContext *ctx = outlink->src;
+    FsyncContext    *s   = ctx->priv;
     int ret;
 
     // read first line to get output timebase
-    // default: av_sscanf(s->cur, "%li %li %i/%i", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
-    ret = av_sscanf(s->cur, s->format, s->param[0], s->param[1], s->param[2], s->param[3]);
+    // default: av_sscanf(s->cur, "{ptsi} {pts} {tb}", &s->ptsi, &s->pts, &s->tb_num, &s->tb_den);
+    ret = av_sscanf(s->cur, s->format_str, s->param[0], s->param[1], s->param[2], s->param[3]);
     if (ret != 4) {
-        av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i).\n", ret);
+        av_log(ctx, AV_LOG_ERROR, "Unexpected format found (%i of 4).\n", ret);
         ff_outlink_set_status(outlink, AVERROR_INVALIDDATA, AV_NOPTS_VALUE);
         return AVERROR_INVALIDDATA;
     }
@@ -249,6 +245,8 @@ static int fsync_config_props(AVFilterLink* outlink)
 static av_cold int fsync_init(AVFilterContext *ctx)
 {
     FsyncContext *s = ctx->priv;
+    AVEncStatsComponent *components = NULL;
+    int nb_components = 0;
     int ret, i;
     int j = 0;
     int has_i = 0;
@@ -259,6 +257,10 @@ static av_cold int fsync_init(AVFilterContext *ctx)
 
     s->buf = av_malloc(BUF_SIZE);
     if (!s->buf)
+        return AVERROR(ENOMEM);
+
+    s->format_str = av_mallocz(BUF_SIZE);
+    if (!s->format_str)
         return AVERROR(ENOMEM);
 
     ret = avio_open(&s->avio_ctx, s->filename, AVIO_FLAG_READ);
@@ -272,59 +274,55 @@ static av_cold int fsync_init(AVFilterContext *ctx)
     if (ret < 0)
         return ret;
 
-    // determine format sequence
-    av_log(ctx, AV_LOG_DEBUG, "sequence: %s\n", s->sequence);
+    // parse format into format_str for av_sscanf
+    ret = av_parse_enc_stats_components(&components, &nb_components, s->format);
+    if (ret < 0)
+        return ret;
 
-#define INVALID_SEQ() {                                                         \
-    av_log(ctx, AV_LOG_ERROR, "Invalid fomat sequence \"%s\".\n", s->sequence); \
-    return AVERROR_INVALIDDATA;                                                 \
-}
-
-#define CHECK_SEQ(c) { \
-    if (has_##c) {     \
-        INVALID_SEQ(); \
-    } else {           \
-        has_##c = 1;   \
-    }                  \
-}
-
-    // format sequene must be exactly 3 chars wide
-    if (av_strnlen(s->sequence, 4) != 3) {
-        INVALID_SEQ();
-    }
-
-    // format sequence must contain 'i', 'o', 't' exactly once
-    for (i = 0; i < 3; i++) {
-        switch (s->sequence[i]) {
-            case 'i':
-                CHECK_SEQ(i);
-                break;
-            case 'o':
-                CHECK_SEQ(o);
-                break;
-            case 't':
-                CHECK_SEQ(t);
-                break;
+    for (i = 0; i < nb_components; i++) {
+        AVEncStatsComponent *c = &components[i];
+        switch (c->type) {
+        default:
+            av_log(ctx, AV_LOG_ERROR, "Unknown format specifier: %i {%s}\n", c->type, c->str);
+            return AVERROR(EINVAL);
+        case ENC_STATS_LITERAL:
+                        if (c->str)  {av_strlcat(s->format_str, c->str,     BUF_SIZE); continue;}
+                        else                                                           continue;
+        case ENC_STATS_FILE_IDX:      av_strlcat(s->format_str, "%*d",      BUF_SIZE); continue;
+        case ENC_STATS_STREAM_IDX:    av_strlcat(s->format_str, "%*d",      BUF_SIZE); continue;
+        case ENC_STATS_FRAME_NUM:     av_strlcat(s->format_str, "%*"PRIu64, BUF_SIZE); continue;
+        case ENC_STATS_FRAME_NUM_IN:  av_strlcat(s->format_str, "%*"PRIu64, BUF_SIZE); continue;
+        case ENC_STATS_TIMEBASE:     {av_strlcat(s->format_str, "%d/%d",    BUF_SIZE);
+                                      if (!has_t) {s->param[j++] = &s->tb_num;
+                                                   s->param[j++] = &s->tb_den;
+                                                   has_t = 1;}                         continue;}
+        case ENC_STATS_TIMEBASE_IN:   av_strlcat(s->format_str, "%*d/%*d",  BUF_SIZE); continue;
+        case ENC_STATS_PTS:          {av_strlcat(s->format_str, "%"PRId64,  BUF_SIZE);
+                                      if (!has_o) {s->param[j++] = &s->pts;
+                                                   has_o = 1;}                         continue;}
+        case ENC_STATS_PTS_TIME:      av_strlcat(s->format_str, "%*g",      BUF_SIZE); continue;
+        case ENC_STATS_PTS_IN:       {av_strlcat(s->format_str, "%"PRId64,  BUF_SIZE);
+                                      if (!has_i) {s->param[j++] = &s->ptsi;
+                                                   has_i = 1;}                         continue;}
+        case ENC_STATS_PTS_TIME_IN:   av_strlcat(s->format_str, "%*g",      BUF_SIZE); continue;
+        case ENC_STATS_DTS:           av_strlcat(s->format_str, "%*"PRId64, BUF_SIZE); continue;
+        case ENC_STATS_DTS_TIME:      av_strlcat(s->format_str, "%*g",      BUF_SIZE); continue;
+        case ENC_STATS_SAMPLE_NUM:    av_strlcat(s->format_str, "%*"PRIu64, BUF_SIZE); continue;
+        case ENC_STATS_NB_SAMPLES:    av_strlcat(s->format_str, "%*d",      BUF_SIZE); continue;
+        case ENC_STATS_PKT_SIZE:      av_strlcat(s->format_str, "%*d",      BUF_SIZE); continue;
+        case ENC_STATS_BITRATE:       av_strlcat(s->format_str, "%*g",      BUF_SIZE); continue;
+        case ENC_STATS_AVG_BITRATE:   av_strlcat(s->format_str, "%*g",      BUF_SIZE); continue;
         }
+        av_freep(c->str);
     }
-    if (!has_i || !has_o || !has_t) {
-        INVALID_SEQ();
-    }
+    av_freep(&components);
 
-    // apply format sequence, mapping param[] pointers to actual variables
-    for (i = 0; i < 3; i++) {
-        switch (s->sequence[i]) {
-            case 'i':
-                s->param[j++] = &s->ptsi;
-                break;
-            case 'o':
-                s->param[j++] = &s->pts;
-                break;
-            case 't':
-                s->param[j++] = &s->tb_num;
-                s->param[j++] = &s->tb_den;
-                break;
-        }
+    // check for all necessary specifiers found
+    if (j != 4) {
+        if (!has_i) av_log(ctx, AV_LOG_ERROR, "Format specifier {ptis} missing in format string\n");
+        if (!has_o) av_log(ctx, AV_LOG_ERROR, "Format specifier {pti} missing in format string\n");
+        if (!has_t) av_log(ctx, AV_LOG_ERROR, "Format specifier {tb} missing in format string\n");
+        return AVERROR(EINVAL);
     }
 
     return 0;
@@ -336,6 +334,7 @@ static av_cold void fsync_uninit(AVFilterContext *ctx)
 
     avio_close(s->avio_ctx);
     av_freep(&s->buf);
+    av_freep(&s->format_str);
     av_frame_unref(s->last_frame);
 }
 
