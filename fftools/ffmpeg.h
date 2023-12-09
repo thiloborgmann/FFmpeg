@@ -440,7 +440,7 @@ enum forced_keyframes_const {
 
 typedef struct EncStats {
     AVEncStatsComponent  *components;
-    int              nb_components;
+    int                nb_components;
 
     AVIOContext        *io;
 } EncStats;
