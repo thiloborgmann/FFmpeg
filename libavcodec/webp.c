@@ -194,6 +194,7 @@ typedef struct WebPContext {
     AVFrame *alpha_frame;               /* AVFrame for alpha data decompressed from VP8L */
     AVPacket *pkt;                      /* AVPacket to be passed to the underlying VP8 decoder */
     AVCodecContext *avctx;              /* parent AVCodecContext */
+    AVCodecContext *avctx_vp8;          /* wrapper context for VP8 decoder */
     int initialized;                    /* set once the VP8 context is initialized */
     int has_alpha;                      /* has a separate alpha chunk */
     enum AlphaCompression alpha_compression; /* compression type for alpha chunk */
@@ -1298,12 +1299,13 @@ static int vp8_lossy_decode_frame(AVCodecContext *avctx, AVFrame *p,
     int ret;
 
     if (!s->initialized) {
-        ff_vp8_decode_init(avctx);
+        VP8Context *s_vp8 = s->avctx_vp8->priv_data;
+        s_vp8->actually_webp = 1;
         s->initialized = 1;
-        s->v.actually_webp = 1;
     }
     avctx->pix_fmt = s->has_alpha ? AV_PIX_FMT_YUVA420P : AV_PIX_FMT_YUV420P;
     s->lossless = 0;
+    s->avctx_vp8->pix_fmt = avctx->pix_fmt;
 
     if (data_size > INT_MAX) {
         av_log(avctx, AV_LOG_ERROR, "unsupported chunk size\n");
@@ -1314,14 +1316,32 @@ static int vp8_lossy_decode_frame(AVCodecContext *avctx, AVFrame *p,
     s->pkt->data = data_start;
     s->pkt->size = data_size;
 
-    ret = ff_vp8_decode_frame(avctx, p, got_frame, s->pkt);
-    if (ret < 0)
+    ret = avcodec_send_packet(s->avctx_vp8, s->pkt);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_ERROR, "Error submitting a packet for decoding\n");
         return ret;
+    }
 
-    if (!*got_frame)
+    ret = avcodec_receive_frame(s->avctx_vp8, p);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_ERROR, "VP8 decoding error: %s.\n", av_err2str(ret));
         return AVERROR_INVALIDDATA;
+    }
 
-    update_canvas_size(avctx, avctx->width, avctx->height);
+    ret = ff_decode_frame_props(avctx, p);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (!p->private_ref) {
+        ret = ff_attach_decode_data(p);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    *got_frame = 1;
+    update_canvas_size(avctx, s->avctx_vp8->width, s->avctx_vp8->height);
 
     if (s->has_alpha) {
         ret = vp8_lossy_decode_alpha(avctx, p, s->alpha_data,
@@ -1533,11 +1553,28 @@ exif_end:
 static av_cold int webp_decode_init(AVCodecContext *avctx)
 {
     WebPContext *s = avctx->priv_data;
+    int ret;
+    const AVCodec *codec;
 
     s->pkt = av_packet_alloc();
     if (!s->pkt)
         return AVERROR(ENOMEM);
 
+
+    /* Prepare everything needed for VP8 decoding */
+    codec = avcodec_find_decoder(AV_CODEC_ID_VP8);
+    if (!codec)
+        return AVERROR_BUG;
+    s->avctx_vp8 = avcodec_alloc_context3(codec);
+    if (!s->avctx_vp8)
+        return AVERROR(ENOMEM);
+    s->avctx_vp8->flags = avctx->flags;
+    s->avctx_vp8->flags2 = avctx->flags2;
+    s->avctx_vp8->pix_fmt = avctx->pix_fmt;
+    ret = avcodec_open2(s->avctx_vp8, codec, NULL);
+    if (ret < 0) {
+        return ret;
+    }
     return 0;
 }
 
@@ -1546,6 +1583,7 @@ static av_cold int webp_decode_close(AVCodecContext *avctx)
     WebPContext *s = avctx->priv_data;
 
     av_packet_free(&s->pkt);
+    avcodec_free_context(&s->avctx_vp8);
 
     if (s->initialized)
         return ff_vp8_decode_free(avctx);
