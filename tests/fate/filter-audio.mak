@@ -73,6 +73,27 @@ fate-filter-amerge: tests/data/asynth-44100-1.wav
 fate-filter-amerge: SRC = $(TARGET_PATH)/tests/data/asynth-44100-1.wav
 fate-filter-amerge: CMD = framecrc -i $(SRC) -i $(SRC) -filter_complex "[0:a][1:a]amerge=inputs=2[aout]" -map "[aout]"
 
+FATE_AFILTER_AOVERLAY += fate-filter-aoverlay-timeline
+fate-filter-aoverlay-timeline: tests/data/asynth-44100-1.wav
+fate-filter-aoverlay-timeline: SRC = $(TARGET_PATH)/tests/data/asynth-44100-1.wav
+fate-filter-aoverlay-timeline: CMD = framecrc -i $(SRC) -i $(SRC) -auto_conversion_filters -filter_complex "aoverlay=enable='\''between\(t,2,3\)'\''"
+
+FATE_AFILTER_AOVERLAY += fate-filter-aoverlay-default
+fate-filter-aoverlay-default: tests/data/asynth-44100-1.wav
+fate-filter-aoverlay-default: SRC = $(TARGET_PATH)/tests/data/asynth-44100-1.wav
+fate-filter-aoverlay-default: CMD = framecrc -i $(SRC) -i $(SRC) -auto_conversion_filters -filter_complex "[0]aselect='\''not\(between\(t,2,3\)\)'\''[temp];[temp][1]aoverlay[out]" -map "[out]"
+
+FATE_AFILTER_AOVERLAY += fate-filter-aoverlay-crossfade
+fate-filter-aoverlay-crossfade: tests/data/asynth-44100-1.wav
+fate-filter-aoverlay-crossfade: SRC = $(TARGET_PATH)/tests/data/asynth-44100-1.wav
+fate-filter-aoverlay-crossfade: CMD = framecrc -i $(SRC) -i $(SRC) -auto_conversion_filters -filter_complex "aoverlay=cf_duration=0.5:enable='\''between\(t,3,4\)'\''"
+
+FATE_AFILTER_AOVERLAY += fate-filter-aoverlay-float
+fate-filter-aoverlay-float: SRC = $(TARGET_SAMPLES)/wav/FLCL_Ending_My-short.wav
+fate-filter-aoverlay-float: CMD = framecrc -i $(SRC) -i $(SRC) -auto_conversion_filters -filter_complex "aoverlay=enable='\''between\(t,2,3\)'\''"
+
+FATE_AFILTER-$(call FILTERDEMDECENCMUX, AOVERLAY, WAV, PCM_S16LE, PCM_S16LE, WAV) += $(FATE_AFILTER_AOVERLAY)
+
 FATE_AFILTER-$(call FILTERDEMDECENCMUX, APAD, WAV, PCM_S16LE, PCM_S16LE, WAV) += fate-filter-apad
 fate-filter-apad: tests/data/asynth-44100-2.wav
 fate-filter-apad: SRC = $(TARGET_PATH)/tests/data/asynth-44100-2.wav
